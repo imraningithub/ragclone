@@ -3,7 +3,7 @@
 Layout (one SQLite file, many collections):
   collections(name PK, dim, embed_model, created_at)
   files(id PK, collection, name, path, type, size, mode, chunk_count, inline_text, created_at)
-  chunks(rowid PK, id UNIQUE, collection, file_id, chunk_index, text, embedding BLOB)
+  chunks(rowid PK, id UNIQUE, collection, file_id, chunk_index, text, embedding BLOB, meta JSON)
   vec_<sha1(collection)[:16]>  -- sqlite-vec vec0 table per collection, rowid = chunks.rowid
 
 When sqlite-vec cannot be loaded (or enable_ann=False) search falls back to a
@@ -12,7 +12,9 @@ linear numpy cosine scan over the stored float32 BLOBs, like Jan does.
 from __future__ import annotations
 
 import hashlib
+import json
 import math
+import re
 import sqlite3
 import threading
 import time
@@ -25,6 +27,15 @@ try:  # pragma: no cover - import guard
     import sqlite_vec  # type: ignore
 except Exception:  # pragma: no cover
     sqlite_vec = None  # type: ignore
+
+
+# Ignored by keyword search: too common in German/English study documents to carry meaning.
+_STOPWORDS = set("""
+the and for are with this that from what when where which how does can will have has was were you your
+not but all any into about there their them they who why our out per one two
+der die das und ist ein eine einen dem den des mit für von zu im in auf bei wie was wer wann wo welche
+welcher welches kann muss ich mir mich man nicht oder auch als sich sie es wird werden sind hat haben
+""".split())
 
 
 class DimensionMismatch(ValueError):
@@ -70,7 +81,8 @@ CREATE TABLE IF NOT EXISTS chunks (
     file_id TEXT NOT NULL,
     chunk_index INTEGER NOT NULL,
     text TEXT NOT NULL,
-    embedding BLOB NOT NULL
+    embedding BLOB NOT NULL,
+    meta TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_chunks_collection ON chunks(collection);
 CREATE INDEX IF NOT EXISTS idx_chunks_file ON chunks(file_id, chunk_index);
@@ -81,6 +93,17 @@ _FILE_COLS = "id, collection, name, path, type, size, mode, chunk_count, created
 
 def _vec_table(collection: str) -> str:
     return "vec_" + hashlib.sha1(collection.encode("utf-8")).hexdigest()[:16]
+
+
+def _load_meta(raw: str | None) -> dict:
+    """chunks.meta is JSON text or NULL (older rows, chat uploads); always hand back a dict."""
+    if not raw:
+        return {}
+    try:
+        meta = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    return meta if isinstance(meta, dict) else {}
 
 
 def _validate_embedding(vec: Any, dim: int) -> np.ndarray:
@@ -120,6 +143,8 @@ class VectorStore:
             except sqlite3.Error:
                 pass
             self._conn.executescript(_SCHEMA)
+            self._migrate()
+            self.fts_available = self._ensure_fts()
             if self.ann_available:
                 for row in self._conn.execute(
                     "SELECT name, dim FROM collections WHERE dim > 0"
@@ -128,6 +153,41 @@ class VectorStore:
             self._conn.commit()
 
     # ------------------------------------------------------------------ helpers
+    def _migrate(self) -> None:
+        """Bring DBs created by older versions up to the current schema."""
+        cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(chunks)").fetchall()}
+        if "meta" not in cols:
+            self._conn.execute("ALTER TABLE chunks ADD COLUMN meta TEXT")
+
+    def _ensure_fts(self) -> bool:
+        """Keyword index (FTS5/BM25) over chunk text, kept in sync with `chunks` by triggers."""
+        try:
+            existed = self._conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE name = 'chunks_fts'"
+            ).fetchone() is not None
+            self._conn.executescript(
+                """
+                CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+                    text, content='chunks', content_rowid='rowid',
+                    tokenize='porter unicode61 remove_diacritics 2');
+                CREATE TRIGGER IF NOT EXISTS chunks_fts_ai AFTER INSERT ON chunks BEGIN
+                    INSERT INTO chunks_fts(rowid, text) VALUES (new.rowid, new.text);
+                END;
+                CREATE TRIGGER IF NOT EXISTS chunks_fts_ad AFTER DELETE ON chunks BEGIN
+                    INSERT INTO chunks_fts(chunks_fts, rowid, text) VALUES ('delete', old.rowid, old.text);
+                END;
+                CREATE TRIGGER IF NOT EXISTS chunks_fts_au AFTER UPDATE OF text ON chunks BEGIN
+                    INSERT INTO chunks_fts(chunks_fts, rowid, text) VALUES ('delete', old.rowid, old.text);
+                    INSERT INTO chunks_fts(rowid, text) VALUES (new.rowid, new.text);
+                END;
+                """
+            )
+            if not existed:  # index chunks written before the keyword index existed
+                self._conn.execute("INSERT INTO chunks_fts(chunks_fts) VALUES ('rebuild')")
+            return True
+        except sqlite3.Error:
+            return False  # SQLite built without FTS5: keyword search is simply unavailable
+
     def _coll(self, name: str) -> sqlite3.Row | None:
         return self._conn.execute(
             "SELECT name, dim, embed_model, created_at FROM collections WHERE name = ?",
@@ -278,9 +338,15 @@ class VectorStore:
         file_id: str,
         texts: list[str],
         embeddings: list[list[float]],
+        metas: list[dict] | None = None,
     ) -> int:
         if len(texts) != len(embeddings):
             raise ValueError("texts and embeddings must have the same length")
+        if metas is not None and len(metas) != len(texts):
+            raise ValueError("metas and texts must have the same length")
+        # Empty metas are stored as NULL so they read back as {} like pre-meta rows.
+        meta_json = [json.dumps(m, ensure_ascii=False) if m else None
+                     for m in (metas if metas is not None else [None] * len(texts))]
         with self._lock:
             coll = self._coll(collection)
             if coll is None:
@@ -303,11 +369,11 @@ class VectorStore:
             use_vec = self.ann_available and self._vec_exists(collection)
             table = _vec_table(collection)
             try:
-                for i, (text, blob) in enumerate(zip(texts, blobs)):
+                for i, (text, blob, meta) in enumerate(zip(texts, blobs, meta_json)):
                     cur = self._conn.execute(
-                        "INSERT INTO chunks(id, collection, file_id, chunk_index, text, embedding)"
-                        " VALUES (?,?,?,?,?,?)",
-                        (uuid.uuid4().hex, collection, file_id, start + i, str(text), blob),
+                        "INSERT INTO chunks(id, collection, file_id, chunk_index, text, embedding, meta)"
+                        " VALUES (?,?,?,?,?,?,?)",
+                        (uuid.uuid4().hex, collection, file_id, start + i, str(text), blob, meta),
                     )
                     if use_vec:
                         self._conn.execute(
@@ -371,7 +437,8 @@ class VectorStore:
             ).fetchone()
             if row is None:
                 raise NotFound(f"file {file_id!r} not found")
-            sql = "SELECT id, file_id, chunk_index, text FROM chunks WHERE file_id = ? AND chunk_index >= ?"
+            sql = ("SELECT id, file_id, chunk_index, text, meta FROM chunks"
+                   " WHERE file_id = ? AND chunk_index >= ?")
             params: list[Any] = [file_id, int(start)]
             if end is not None:
                 sql += " AND chunk_index < ?"
@@ -379,7 +446,8 @@ class VectorStore:
             sql += " ORDER BY chunk_index"
             rows = self._conn.execute(sql, params).fetchall()
         return [
-            {"id": r["id"], "file_id": r["file_id"], "chunk_index": r["chunk_index"], "text": r["text"]}
+            {"id": r["id"], "file_id": r["file_id"], "chunk_index": r["chunk_index"], "text": r["text"],
+             "meta": _load_meta(r["meta"])}
             for r in rows
         ]
 
@@ -473,12 +541,57 @@ class VectorStore:
                 return out[:limit]
             k = min(total, k * 4)
 
-    def _hydrate(self, scored: list[tuple[int, float]]) -> list[dict]:
+    def keyword_search(self, collection: str, query: str, limit: int = 20,
+                       file_ids: list[str] | None = None) -> list[dict]:
+        """BM25 keyword search. Hits look like search() hits, but "score" is the BM25 relevance
+        (higher is better, not comparable to cosine). Returns [] if FTS5 is unavailable."""
+        terms = [t for t in re.findall(r"\w+", query.lower()) if len(t) > 2 and t not in _STOPWORDS]
+        if not getattr(self, "fts_available", False) or not terms or limit <= 0:
+            return []
+        match = " OR ".join(f'"{t}"' for t in dict.fromkeys(terms))
+        sql = ("SELECT c.rowid, bm25(chunks_fts) AS r FROM chunks_fts JOIN chunks c ON c.rowid = chunks_fts.rowid "
+               "WHERE chunks_fts MATCH ? AND c.collection = ?")
+        params: list[Any] = [match, collection]
+        if file_ids is not None:
+            if not file_ids:
+                return []
+            sql += f" AND c.file_id IN ({','.join('?' * len(file_ids))})"
+            params.extend(file_ids)
+        sql += " ORDER BY r LIMIT ?"
+        params.append(int(limit))
+        with self._lock:
+            try:
+                rows = self._conn.execute(sql, params).fetchall()
+            except sqlite3.Error:
+                return []
+            return self._hydrate([(r[0], -float(r[1])) for r in rows], clamp=False)
+
+    def score_chunks(self, collection: str, query_embedding: list[float], chunk_ids: list[str]) -> dict[str, float]:
+        """Cosine similarity of the query to specific chunks (e.g. ones found only by keyword search)."""
+        if not chunk_ids:
+            return {}
+        with self._lock:
+            coll = self._coll(collection)
+            if coll is None or coll["dim"] <= 0:
+                return {}
+            q = _validate_embedding(query_embedding, coll["dim"]).astype(np.float64)
+            rows = self._conn.execute(
+                f"SELECT id, embedding FROM chunks WHERE collection = ? AND id IN ({','.join('?' * len(chunk_ids))})",
+                [collection, *chunk_ids],
+            ).fetchall()
+        out = {}
+        for cid, blob in rows:
+            v = np.frombuffer(blob, dtype=np.float32).astype(np.float64)
+            denom = np.linalg.norm(v) * np.linalg.norm(q)
+            out[cid] = float(v @ q / denom) if denom > 0 else 0.0
+        return out
+
+    def _hydrate(self, scored: list[tuple[int, float]], clamp: bool = True) -> list[dict]:
         if not scored:
             return []
         ids = [s[0] for s in scored]
         rows = self._conn.execute(
-            "SELECT c.rowid AS rid, c.id, c.file_id, c.chunk_index, c.text, f.name AS file_name "
+            "SELECT c.rowid AS rid, c.id, c.file_id, c.chunk_index, c.text, c.meta, f.name AS file_name "
             f"FROM chunks c JOIN files f ON f.id = c.file_id WHERE c.rowid IN ({','.join('?' * len(ids))})",
             ids,
         ).fetchall()
@@ -495,7 +608,8 @@ class VectorStore:
                     "file_name": r["file_name"],
                     "chunk_index": r["chunk_index"],
                     "text": r["text"],
-                    "score": max(-1.0, min(1.0, score)),
+                    "score": max(-1.0, min(1.0, score)) if clamp else score,
+                    "meta": _load_meta(r["meta"]),
                 }
             )
         return hits

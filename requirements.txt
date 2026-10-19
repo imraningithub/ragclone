@@ -12,3 +12,4 @@ openpyxl
 pytest
 httpx
 fpdf2  # only for scripts/make_samples.py
+pypdfium2

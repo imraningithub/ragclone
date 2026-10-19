@@ -87,3 +87,45 @@ def test_build_messages_disabled_adds_no_context(env, tmp_path):
     messages, cites = rag.build_messages(store, provider, settings, replace(RagSettings(), enabled=False),
                                          collection=coll, history=[], user_message="secret?")
     assert "secret" not in messages[0]["content"] and cites == []
+
+
+# ------------------------------------------------------------------ KB mode
+def _kb_pdf(path: Path, pages: list[str]) -> str:
+    from fpdf import FPDF
+
+    pdf = FPDF()
+    pdf.set_font("Helvetica", size=11)
+    for text in pages:
+        pdf.add_page()
+        if text:
+            pdf.multi_cell(0, 6, text)
+    pdf.output(str(path))
+    return str(path)
+
+
+def test_ingest_kb_file_pdf_chunks_carry_page(env, tmp_path):
+    settings, store, provider = env
+    settings = replace(settings, kb_chunk_size=200, kb_overlap=20)
+    long_page = " ".join(f"Satz {i} über die Prüfungsordnung." for i in range(30))
+    path = _kb_pdf(tmp_path / "po.pdf", ["Die Einschreibung erfolgt im Juli.", "", long_page])
+    info = rag.ingest_kb_file(store, provider, settings, collection="kb_dtm", path=path, name="po.pdf")
+    assert info["mode"] == "embeddings" and info["type"] == "application/pdf"
+    chunks = store.get_chunks("kb_dtm", info["id"])
+    assert info["chunk_count"] == len(chunks) > 2
+    assert chunks[0]["meta"] == {"page": 1} and "Einschreibung" in chunks[0]["text"]
+    assert all(c["meta"] == {"page": 3} for c in chunks[1:])  # blank page 2 has no chunks
+    assert all(len(c["text"]) <= 200 for c in chunks)
+    hit = store.search("kb_dtm", provider.embed(["Die Einschreibung erfolgt im Juli."])[0], threshold=-1)[0]
+    assert hit["meta"] == {"page": 1}
+
+
+def test_ingest_kb_file_text_and_empty(env, tmp_path):
+    settings, store, provider = env
+    info = rag.ingest_kb_file(store, provider, settings, collection="kb_dtm",
+                              path=_txt(tmp_path, "faq.md", "# FAQ\n\nMensa öffnet um 11 Uhr."), name="faq.md")
+    assert info["mode"] == "embeddings" and info["chunk_count"] == 1
+    assert store.get_chunks("kb_dtm", info["id"])[0]["meta"] == {}
+    with pytest.raises(ValueError, match="no extractable text"):
+        rag.ingest_kb_file(store, provider, settings, collection="kb_dtm",
+                           path=_kb_pdf(tmp_path / "scan.pdf", [""]), name="scan.pdf")
+    assert [f["name"] for f in store.list_files("kb_dtm")] == ["faq.md"]

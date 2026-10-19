@@ -1,8 +1,10 @@
 """FastAPI app: threads, attachments (Jan-style RAG), settings and streamed chat."""
 from __future__ import annotations
 
+import hmac
 import json
 import re
+import time
 import shutil
 import threading
 import uuid
@@ -14,7 +16,7 @@ from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFil
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import rag
+from . import guardrails, rag, retrieval
 from .config import ROOT, RagSettings, Settings, get_settings, load_rag_settings, save_rag_settings
 from .parsing import SUPPORTED_EXTENSIONS, ParseError, UnsupportedFileType
 from .providers import Provider, get_provider
@@ -23,7 +25,13 @@ from .threads import ThreadStore
 
 WEB_DIR = ROOT / "web"
 HISTORY_LIMIT = 20
+KB_HISTORY_LIMIT = 6
 TITLE_LENGTH = 40
+TOKEN_GROUP_WORDS = 3
+# done.refused reasons: "no_context" (retrieval found nothing above kb_threshold; the chat model is not
+# called) plus guardrails.finalize_answer's "no_answer" / "uncited".
+NO_CONTEXT = "no_context"
+UPLOADS_DISABLED = "Uploads are disabled in this assistant"
 
 
 class AppState:
@@ -56,6 +64,16 @@ def _safe_name(name: str) -> str:
     return re.sub(r"[^\w.\- ]+", "_", name).strip() or "file"
 
 
+def _word_groups(text: str, size: int = TOKEN_GROUP_WORDS) -> list[str]:
+    """Split text into small pieces (words keep their surrounding whitespace) for token events."""
+    words = re.findall(r"\s*\S+\s*", text) or ([text] if text else [])
+    return ["".join(words[i:i + size]) for i in range(0, len(words), size)]
+
+
+def _make_title(message: str) -> str:
+    return message if len(message) <= TITLE_LENGTH else message[:TITLE_LENGTH].rstrip() + "…"
+
+
 def _provider_error(e: Exception) -> HTTPException:
     status = getattr(e, "status_code", None)
     return HTTPException(502, f"Model provider error{f' ({status})' if status else ''}: {e.__class__.__name__}")
@@ -64,7 +82,9 @@ def _provider_error(e: Exception) -> HTTPException:
 def create_app(settings: Settings | None = None, provider: Provider | None = None) -> FastAPI:
     settings = settings or get_settings()
     state = AppState(settings, provider)
-    app = FastAPI(title="Jan RAG clone")
+    kb_mode = settings.app_mode == "kb"
+    limiter = guardrails.RateLimiter(settings.rate_limit_per_min)
+    app = FastAPI(title="DTM Studienassistent" if kb_mode else "Jan RAG clone")
     app.state.rag_app = state
 
     @app.exception_handler(NotFound)
@@ -92,16 +112,25 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
     # -- status + settings -----------------------------------------------
     @app.get("/api/status")
     def status():
-        return {"provider": settings.provider, "chat_model": settings.chat_model,
-                "embed_model": settings.embed_model, "ann_available": state.store.ann_available,
-                "context_window": settings.context_window}
+        out = {"provider": settings.provider, "chat_model": settings.chat_model,
+               "embed_model": settings.embed_model, "ann_available": state.store.ann_available,
+               "context_window": settings.context_window, "mode": "kb" if kb_mode else "chat"}
+        if kb_mode:
+            out.update(kb_name=settings.kb_name, refusal_contact=settings.refusal_contact,
+                       documents=[{"name": f["name"], "chunk_count": f["chunk_count"]}
+                                  for f in state.store.list_files(settings.kb_collection)])
+        return out
 
     @app.get("/api/settings")
     def get_rag_settings():
         return asdict(state.rag)
 
     @app.put("/api/settings")
-    def put_rag_settings(data: dict = Body(...)):
+    def put_rag_settings(request: Request, data: dict = Body(...)):
+        if kb_mode:
+            given = request.headers.get("X-Admin-Token") or ""
+            if not settings.admin_token or not hmac.compare_digest(given.encode(), settings.admin_token.encode()):
+                raise HTTPException(403, "Admin token required")
         try:
             state.rag = state.rag.update(data)
         except (ValueError, TypeError) as e:
@@ -146,6 +175,8 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
 
     @app.post("/api/threads/{thread_id}/files")
     def upload_file(thread_id: str, file: UploadFile = File(...), parse_mode: str | None = Form(None)):
+        if kb_mode:
+            raise HTTPException(403, UPLOADS_DISABLED)
         thread_or_404(thread_id)
         if not state.rag.enabled:
             raise HTTPException(400, "Attachments are disabled in settings")
@@ -201,6 +232,8 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
 
     @app.delete("/api/threads/{thread_id}/files/{file_id}")
     def delete_file(thread_id: str, file_id: str):
+        if kb_mode:
+            raise HTTPException(403, UPLOADS_DISABLED)
         thread_or_404(thread_id)
         collection = rag.collection_for_thread(thread_id)
         info = state.store.get_file(collection, file_id)
@@ -215,10 +248,84 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         thread_or_404(thread_id)
         return state.store.get_chunks(rag.collection_for_thread(thread_id), file_id)
 
+    # -- knowledge-base documents ---------------------------------------------
+    @app.get("/kb/{name}", include_in_schema=False)
+    def kb_document(name: str):
+        if (not kb_mode or not name or "/" in name or "\\" in name or ".." in name
+                or name != Path(name).name):
+            raise HTTPException(404, "document not found")
+        folder = Path(settings.kb_dir).resolve()
+        path = (folder / name).resolve()
+        if path.parent != folder or not path.is_file():
+            raise HTTPException(404, "document not found")
+        media = "application/pdf" if path.suffix.lower() == ".pdf" else None
+        # inline so the browser's PDF viewer opens it and honours #page=N
+        return FileResponse(path, media_type=media, filename=path.name, content_disposition_type="inline")
+
     # -- chat ----------------------------------------------------------------
+    def kb_chat(request: Request, thread_id: str, thread: dict, data: dict) -> StreamingResponse:
+        try:
+            question = guardrails.validate_question(str(data.get("message") or ""))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        client_ip = request.client.host if request.client and request.client.host else "local"
+        if not limiter.allow(client_ip):
+            raise HTTPException(429, "Too many requests, please wait a minute")
+        provider = state.provider
+        history = [{"role": m["role"], "content": m["content"]}
+                   for m in thread["messages"][-KB_HISTORY_LIMIT:]]
+        try:
+            plan = retrieval.plan_query(provider, history, question, model=settings.kb_chat_model)
+            hits = retrieval.retrieve(state.store, provider, collection=settings.kb_collection, plan=plan,
+                                      question=question, top_k=settings.kb_top_k,
+                                      threshold=settings.kb_threshold)
+        except Exception as e:
+            raise _provider_error(e)
+        language = plan.get("language") or retrieval.guess_language(question)
+        if not hits:
+            # Nothing relevant in the knowledge base: refuse without calling the chat model.
+            answer = guardrails.refusal_text(language, settings.refusal_contact)
+            reason, citations = NO_CONTEXT, []
+        else:
+            messages, citations = guardrails.build_kb_messages(question=question, plan=plan, hits=hits,
+                                                               history=history)
+            try:
+                raw = provider.complete(messages, temperature=settings.chat_temperature, model=settings.kb_chat_model)
+            except Exception as e:
+                raise _provider_error(e)
+            answer, reason = guardrails.finalize_answer(raw, citations, language=language,
+                                                        contact=settings.refusal_contact)
+            if reason:
+                citations = []
+            else:
+                citations = guardrails.cited_only(answer, citations)
+
+        state.threads.add_message(thread_id, "user", question)
+        title = thread["title"]
+        if title == "New chat":
+            title = _make_title(question)
+            state.threads.rename(thread_id, title)
+        saved = state.threads.add_message(thread_id, "assistant", answer, citations or None)
+        guardrails.log_event(settings.kb_log_path, {
+            "ts": time.time(), "thread_id": thread_id, "question": question, "plan": plan,
+            "hits": [{"file": h.get("file_name"), "page": (h.get("meta") or {}).get("page"),
+                      "score": h.get("score")} for h in hits],
+            "reason": reason, "answer": answer})
+
+        def stream() -> Iterator[str]:
+            yield _sse("citations", citations)
+            for piece in _word_groups(answer):
+                yield _sse("token", {"text": piece})
+            yield _sse("done", {"message_id": saved["id"], "title": title, "refused": reason})
+
+        return StreamingResponse(stream(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
     @app.post("/api/threads/{thread_id}/chat")
-    def chat(thread_id: str, data: dict = Body(...)):
+    def chat(thread_id: str, request: Request, data: dict = Body(...)):
         thread = thread_or_404(thread_id)
+        if kb_mode:
+            return kb_chat(request, thread_id, thread, data)
         message = str(data.get("message") or "").strip()
         if not message:
             raise HTTPException(400, "message must not be empty")
@@ -234,7 +341,7 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         state.threads.add_message(thread_id, "user", message)
         title = thread["title"]
         if title == "New chat":
-            title = message if len(message) <= TITLE_LENGTH else message[:TITLE_LENGTH].rstrip() + "…"
+            title = _make_title(message)
             state.threads.rename(thread_id, title)
 
         def stream() -> Iterator[str]:
@@ -249,7 +356,7 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
                 return
             # Only reached when the stream finished; a client disconnect closes the generator first.
             saved = state.threads.add_message(thread_id, "assistant", "".join(parts), citations)
-            yield _sse("done", {"message_id": saved["id"], "title": title})
+            yield _sse("done", {"message_id": saved["id"], "title": title, "refused": None})
 
         return StreamingResponse(stream(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

@@ -22,6 +22,28 @@ class Settings:
     embed_model: str
     context_window: int
     data_dir: Path
+    # Knowledge-base mode (DTM Studienassistent): one admin-managed collection, students only chat.
+    app_mode: str = "chat"  # chat | kb
+    kb_name: str = "dtm"
+    kb_dir: Path = ROOT / "kb" / "dtm"
+    refusal_contact: str = "Study and Career Service (studienberatung@oth-aw.de, +49 961 382-1133) · Prof. Dr. Julia Heigl, DTM (j.heigl@oth-aw.de)"
+    chat_temperature: float = 0.1
+    admin_token: str | None = None
+    rate_limit_per_min: int = 0  # 0 = off (local); set e.g. 20 when hosted
+    kb_chunk_size: int = 1000
+    kb_overlap: int = 150
+    kb_top_k: int = 8
+    # gpt-4.1-mini invented ECTS numbers in the DTM eval; gpt-4.1 answered or refused correctly.
+    kb_chat_model: str = "gpt-4.1"
+    kb_threshold: float = 0.2
+
+    @property
+    def kb_collection(self) -> str:
+        return f"kb_{self.kb_name}"
+
+    @property
+    def kb_log_path(self) -> Path:
+        return self.data_dir / "kb_log.jsonl"
 
     @property
     def db_path(self) -> str:
@@ -29,7 +51,8 @@ class Settings:
 
     @property
     def threads_db_path(self) -> str:
-        return str(self.data_dir / "threads.db")
+        # KB mode keeps its own chat history, separate from "chat with your files" mode.
+        return str(self.data_dir / ("kb_threads.db" if self.app_mode == "kb" else "threads.db"))
 
     @property
     def uploads_dir(self) -> Path:
@@ -109,4 +132,16 @@ def get_settings() -> Settings:
         embed_model=os.getenv("EMBED_MODEL", "text-embedding-3-small"),
         context_window=int(os.getenv("CONTEXT_WINDOW", "128000")),
         data_dir=data_dir,
+        app_mode=os.getenv("APP_MODE", "chat").lower(),
+        kb_name=os.getenv("KB_NAME", "dtm"),
+        kb_dir=Path(os.getenv("KB_DIR") or ROOT / "kb" / os.getenv("KB_NAME", "dtm")),
+        refusal_contact=os.getenv("REFUSAL_CONTACT", "Study and Career Service (studienberatung@oth-aw.de, +49 961 382-1133) · Prof. Dr. Julia Heigl, DTM (j.heigl@oth-aw.de)"),
+        chat_temperature=float(os.getenv("CHAT_TEMPERATURE", "0.1")),
+        admin_token=os.getenv("ADMIN_TOKEN") or None,
+        rate_limit_per_min=int(os.getenv("RATE_LIMIT_PER_MIN", "0")),
+        kb_chunk_size=int(os.getenv("KB_CHUNK_SIZE", "1000")),
+        kb_overlap=int(os.getenv("KB_OVERLAP", "150")),
+        kb_top_k=int(os.getenv("KB_TOP_K", "8")),
+        kb_chat_model=os.getenv("KB_CHAT_MODEL", "gpt-4.1"),
+        kb_threshold=float(os.getenv("KB_THRESHOLD", "0.2")),
     )

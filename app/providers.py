@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import re
 from typing import Iterator, Protocol
@@ -15,7 +16,9 @@ class Provider(Protocol):
     embed_model: str
 
     def embed(self, texts: list[str]) -> list[list[float]]: ...
-    def chat_stream(self, messages: list[dict]) -> Iterator[str]: ...
+    def chat_stream(self, messages: list[dict], temperature: float | None = None) -> Iterator[str]: ...
+    def complete(self, messages: list[dict], *, json_mode: bool = False,
+                 temperature: float | None = None, model: str | None = None) -> str: ...
     def count_tokens(self, text: str) -> int: ...
 
 
@@ -44,11 +47,28 @@ class OpenAIProvider:
         resp = self.client.embeddings.create(model=self.embed_model, input=texts)
         return [d.embedding for d in sorted(resp.data, key=lambda d: d.index)]
 
-    def chat_stream(self, messages: list[dict]) -> Iterator[str]:
-        stream = self.client.chat.completions.create(model=self.chat_model, messages=messages, stream=True)
+    def chat_stream(self, messages: list[dict], temperature: float | None = None) -> Iterator[str]:
+        kwargs: dict = {}
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        stream = self.client.chat.completions.create(
+            model=self.chat_model, messages=messages, stream=True, **kwargs
+        )
         for event in stream:
             if event.choices and event.choices[0].delta and event.choices[0].delta.content:
                 yield event.choices[0].delta.content
+
+    def complete(self, messages: list[dict], *, json_mode: bool = False,
+                 temperature: float | None = None, model: str | None = None) -> str:
+        kwargs: dict = {}
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        if json_mode:
+            kwargs["response_format"] = {"type": "json_object"}
+        resp = self.client.chat.completions.create(model=model or self.chat_model, messages=messages, **kwargs)
+        if not resp.choices:
+            return ""
+        return resp.choices[0].message.content or ""
 
     def count_tokens(self, text: str) -> int:
         return approx_tokens(text)
@@ -73,12 +93,29 @@ class FakeProvider:
             out.append([x / n for x in v])
         return out
 
-    def chat_stream(self, messages: list[dict]) -> Iterator[str]:
+    def chat_stream(self, messages: list[dict], temperature: float | None = None) -> Iterator[str]:
         system = "\n".join(m["content"] for m in messages if m["role"] == "system")
         user = messages[-1]["content"] if messages else ""
         reply = f"(fake) You asked: {user}. Context chars: {len(system)}."
         for word in reply.split(" "):
             yield word + " "
+
+    def complete(self, messages: list[dict], *, json_mode: bool = False,
+                 temperature: float | None = None, model: str | None = None) -> str:
+        system = "\n".join(m["content"] for m in messages if m["role"] == "system")
+        last_user = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
+        if json_mode:
+            # The plan step wraps the question in <question> tags; unwrap it so the plan looks realistic.
+            m = re.search(r"<question>\s*(.*?)\s*</question>", last_user, re.S)
+            q = m.group(1) if m else last_user
+            from .retrieval import guess_language  # local import; retrieval does not import this module
+
+            lang = "en" if guess_language(q) == "en" else "de"
+            return json.dumps({"standalone": q, "language": lang, "queries_de": [q], "queries_en": [q]},
+                              ensure_ascii=False)
+        if "<excerpt" in system:
+            return f"(fake) Laut den offiziellen Dokumenten: {last_user} [1]"
+        return "NO_ANSWER"
 
     def count_tokens(self, text: str) -> int:
         return approx_tokens(text)

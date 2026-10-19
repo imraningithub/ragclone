@@ -9,7 +9,60 @@ const state = {
   uploading: [], // {key, name}
   settings: null,
   controller: null, // AbortController while streaming
+  mode: "chat", // "chat" | "kb", from GET /api/status
+  documents: [], // kb mode: [{name, chunk_count}]
 };
+
+// ---------- kb mode (DTM Studienassistent) ----------
+const DE = String(navigator.language || "").toLowerCase().startsWith("de");
+const IS_ADMIN = (() => { try { return new URLSearchParams(location.search).get("admin") === "1"; } catch { return false; } })();
+const KB_TITLE = "DTM Studienassistent";
+const T = DE ? {
+  newChat: "Neuer Chat",
+  greeting: "Hallo! Ich beantworte Fragen zu deinem DTM-Studium – ausschließlich auf Basis der offiziellen Dokumente.",
+  examplesLabel: "Beispielfragen",
+  placeholder: "Frag etwas zu deinem DTM-Studium…",
+  disclaimer: "Antworten basieren nur auf den offiziellen DTM-Dokumenten. Verbindlich sind die Originale.",
+  page: "S.", openPdf: (p) => `PDF öffnen (S. ${p})`, openDoc: "Dokument öffnen",
+  docs: (n) => `${n} Dokument${n === 1 ? "" : "e"}`, noDocs: "Keine Dokumente geladen.",
+  tooMany: "Zu viele Anfragen – bitte kurz warten.", notice: "Hinweis",
+  tokenPrompt: "Admin-Token eingeben:", tokenMissing: "Admin-Token erforderlich.", tokenBad: "Admin-Token ungültig.",
+  message: "Nachricht",
+} : {
+  newChat: "New chat",
+  greeting: "Hi! I answer questions about your DTM studies – based only on the official documents.",
+  examplesLabel: "Example questions",
+  placeholder: "Ask something about your DTM studies…",
+  disclaimer: "Answers are based only on the official DTM documents. The originals are binding.",
+  page: "p.", openPdf: (p) => `Open PDF (p. ${p})`, openDoc: "Open document",
+  docs: (n) => `${n} document${n === 1 ? "" : "s"}`, noDocs: "No documents loaded.",
+  tooMany: "Too many requests – please wait a moment.", notice: "Notice",
+  tokenPrompt: "Enter admin token:", tokenMissing: "Admin token required.", tokenBad: "Invalid admin token.",
+  message: "Message",
+};
+const EXAMPLES = DE
+  ? ["Wie viele ECTS-Punkte hat das erste Semester?", "Wie melde ich mich zu Prüfungen an?", "Welche Module habe ich im ersten Semester?", "Wie oft darf ich eine Prüfung wiederholen?"]
+  : ["How many ECTS credits is the first semester?", "How do I register for exams?", "Which modules do I take in the first semester?", "How often can I retake an exam?"];
+const isKb = () => state.mode === "kb";
+const defaultTitle = () => (isKb() ? KB_TITLE : "New chat");
+// Backend names fresh threads "New chat"; in kb mode show the localized/default label instead.
+const threadLabel = (title) => (isKb() && (!title || title === "New chat") ? T.newChat : title || "New chat");
+const headerTitle = (title) => (isKb() && (!title || title === "New chat") ? KB_TITLE : title || "New chat");
+const pageOf = (c) => {
+  const p = c && (c.page ?? (c.meta && c.meta.page));
+  return p === null || p === undefined || p === "" ? null : p;
+};
+const ADMIN_KEY = "dtm_admin_token";
+function getAdminToken() {
+  let tok = null;
+  try { tok = sessionStorage.getItem(ADMIN_KEY); } catch { /* storage blocked */ }
+  if (!tok) {
+    tok = (prompt(T.tokenPrompt) || "").trim() || null;
+    if (tok) { try { sessionStorage.setItem(ADMIN_KEY, tok); } catch { /* storage blocked */ } }
+  }
+  return tok;
+}
+function clearAdminToken() { try { sessionStorage.removeItem(ADMIN_KEY); } catch { /* storage blocked */ } }
 
 const el = {
   threadList: $("threadList"), threadEmpty: $("threadEmpty"), status: $("status"),
@@ -20,6 +73,9 @@ const el = {
   main: $("main"), dropOverlay: $("dropOverlay"), toasts: $("toasts"),
   settingsDialog: $("settingsDialog"), settingsForm: $("settingsForm"), settingsError: $("settingsError"),
   parseDialog: $("parseDialog"), parseFile: $("parseFile"),
+  brand: $("brand"), newChatLabel: $("newChatLabel"), sources: $("sources"), sourceList: $("sourceList"),
+  sourceCount: $("sourceCount"), emptyText: $("emptyText"), examples: $("examples"), disclaimer: $("disclaimer"),
+  openSettings: $("openSettings"),
 };
 
 // ---------- helpers ----------
@@ -40,8 +96,8 @@ async function errorFrom(res) {
   return new ApiError(res.status, formatDetail(detail, `${res.status} ${res.statusText || "Request failed"}`));
 }
 
-async function api(path, { method = "GET", json, body, signal } = {}) {
-  const opts = { method, signal, headers: {} };
+async function api(path, { method = "GET", json, body, signal, headers } = {}) {
+  const opts = { method, signal, headers: { ...(headers || {}) } };
   if (json !== undefined) { opts.body = JSON.stringify(json); opts.headers["Content-Type"] = "application/json"; }
   else if (body) opts.body = body;
   let res;
@@ -76,6 +132,8 @@ function svg(path) {
 const ICON_X = '<path d="M18 6L6 18M6 6l12 12"/>';
 const ICON_TRASH = '<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/>';
 const ICON_FILE = '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>';
+const ICON_INFO = '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>';
+const ICON_EXT = '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/>';
 
 function toast(msg, kind = "error") {
   const t = h("div", { class: `toast ${kind}` }, msg);
@@ -129,10 +187,57 @@ function renderMarkdown(src) {
 // ---------- sidebar / threads ----------
 async function loadStatus() {
   try {
-    const s = await api("/status");
-    el.status.textContent = `${s.provider} · ${s.chat_model} · ${s.embed_model} · ANN ${s.ann_available ? "on" : "off"}`;
-    el.status.title = el.status.textContent;
+    const s = (await api("/status")) || {};
+    const tech = `${s.provider} · ${s.chat_model} · ${s.embed_model} · ANN ${s.ann_available ? "on" : "off"}`;
+    if (s.mode === "kb") {
+      state.documents = Array.isArray(s.documents) ? s.documents.filter((d) => d && d.name) : [];
+      applyKbMode();
+      el.status.textContent = T.docs(state.documents.length);
+      el.status.title = tech;
+    } else {
+      el.status.textContent = tech;
+      el.status.title = el.status.textContent;
+    }
   } catch (e) { el.status.textContent = `Status unavailable: ${e.message}`; }
+}
+
+// Switches the static chat-mode markup into the DTM Studienassistent layout. Called once, when status says "kb".
+function applyKbMode() {
+  state.mode = "kb";
+  document.body.classList.add("kb-mode");
+  document.documentElement.lang = DE ? "de" : "en";
+  document.title = KB_TITLE;
+  el.brand.hidden = false;
+  el.newChatLabel.textContent = T.newChat;
+  el.attachBtn.hidden = true; el.fileInput.disabled = true;
+  el.dropOverlay.hidden = true;
+  state.files = []; state.uploading = []; renderAttachments();
+  el.openSettings.hidden = !IS_ADMIN;
+  el.input.placeholder = T.placeholder;
+  const lbl = document.querySelector('label[for="input"]');
+  if (lbl) lbl.textContent = T.message;
+  el.disclaimer.textContent = T.disclaimer; el.disclaimer.hidden = false;
+  el.emptyText.textContent = T.greeting;
+  el.examples.setAttribute("role", "group");
+  el.examples.setAttribute("aria-label", T.examplesLabel);
+  el.examples.replaceChildren(...EXAMPLES.map((q) => h("button", {
+    type: "button", class: "example-chip", onclick: () => { if (state.controller) return; el.input.value = q; sendMessage(); },
+  }, q)));
+  el.examples.hidden = false;
+  if (!state.currentId) el.title.textContent = KB_TITLE;
+  renderSources();
+  renderThreads();
+}
+
+function renderSources() {
+  const docs = state.documents;
+  el.sourceCount.textContent = String(docs.length);
+  el.sourceList.replaceChildren(...(docs.length ? docs.map((d) => h("li", {},
+    h("a", { href: `/kb/${encodeURIComponent(d.name)}`, target: "_blank", rel: "noopener", title: `${d.name} – ${T.openDoc}` },
+      svg(ICON_FILE), h("span", { class: "file-name" }, d.name)),
+    typeof d.chunk_count === "number" ? h("span", { class: "badge" }, String(d.chunk_count)) : null,
+  )) : [h("li", { class: "muted" }, T.noDocs)]));
+  el.sources.hidden = false;
 }
 
 async function loadSettings() {
@@ -159,7 +264,7 @@ function renderThreads() {
 
 function threadItem(t) {
   const active = t.id === state.currentId;
-  const label = h("span", { class: "thread-name" }, t.title || "New chat");
+  const label = h("span", { class: "thread-name" }, threadLabel(t.title));
   const open = h("button", {
     type: "button", class: "thread-open", "aria-current": active ? "page" : null,
     title: "Open (double-click or F2 to rename)",
@@ -186,7 +291,7 @@ function startRename(t, li) {
       catch (e) { toast(`Rename failed: ${e.message}`); }
     }
     renderThreads();
-    if (t.id === state.currentId) el.title.textContent = t.title || "New chat";
+    if (t.id === state.currentId) el.title.textContent = headerTitle(t.title);
     el.threadList.querySelector(`[data-id="${CSS.escape(t.id)}"] .thread-open`)?.focus();
   };
   input.addEventListener("keydown", (e) => {
@@ -210,7 +315,7 @@ async function deleteThread(t) {
 function newChat() {
   stopStreaming();
   state.currentId = null; state.files = []; state.uploading = [];
-  el.title.textContent = "New chat";
+  el.title.textContent = defaultTitle();
   el.messages.replaceChildren(el.emptyState);
   el.emptyState.hidden = false;
   renderAttachments(); renderThreads(); closeSidebar();
@@ -225,9 +330,9 @@ async function openThread(id) {
   try {
     const t = await api(`/threads/${id}`);
     if (state.currentId !== id) return;
-    el.title.textContent = t.title || "New chat";
+    el.title.textContent = headerTitle(t.title);
     renderMessages(t.messages || []);
-    await loadFiles();
+    if (!isKb()) await loadFiles();
   } catch (e) {
     if (e.status === 404) {
       toast("That chat no longer exists");
@@ -242,7 +347,7 @@ async function ensureThread() {
   const t = await api("/threads", { method: "POST", json: {} });
   state.threads.unshift(t);
   state.currentId = t.id;
-  el.title.textContent = t.title || "New chat";
+  el.title.textContent = headerTitle(t.title);
   renderThreads();
   return t.id;
 }
@@ -253,7 +358,12 @@ function renderMessages(messages) {
   el.emptyState.hidden = messages.length > 0;
   for (const m of messages) {
     const node = messageNode(m.role);
-    fillMessage(node, m.content, m.citations || []);
+    const cites = Array.isArray(m.citations) ? m.citations : [];
+    // Stored kb messages carry no refusal flag; accepted kb answers always have citations,
+    // so an assistant message without any is treated as a refusal (unless m.refused says otherwise).
+    const refused = isKb() && m.role !== "user" && (m.refused !== undefined ? !!m.refused : cites.length === 0);
+    fillMessage(node, m.content, refused ? [] : cites);
+    if (refused) markRefused(node);
     el.messages.append(node);
   }
   scrollToBottom(true);
@@ -273,20 +383,44 @@ function fillMessage(node, content, citations) {
   if (citations) renderCitations(node, citations);
 }
 
+// Refused kb answer: muted info bubble, no citations.
+function markRefused(node) {
+  if (node.classList.contains("refused")) return;
+  node.classList.add("refused");
+  node.setAttribute("aria-label", T.notice);
+  renderCitations(node, []);
+  node._cites.hidden = true;
+  const icon = svg(ICON_INFO);
+  icon.classList.add("info-icon");
+  node.insertBefore(icon, node._body);
+}
+
+let citeSeq = 0;
 function renderCitations(node, citations) {
   node._citations = citations;
-  node._cites.replaceChildren(...citations.map((c) => {
+  node._cites.replaceChildren(...citations.filter(Boolean).map((c) => {
     const score = typeof c.score === "number" ? c.score.toFixed(2) : c.score;
-    const excerpt = h("div", { class: "excerpt", hidden: true }, c.text || "");
+    const page = pageOf(c);
+    const file = c.file_name || "?";
+    const excerptId = `excerpt-${++citeSeq}`;
+    const excerpt = h("div", { class: "excerpt", id: excerptId, hidden: true }, h("div", { class: "excerpt-text" }, c.text || ""));
+    if (isKb() && c.file_name) {
+      const href = `/kb/${encodeURIComponent(c.file_name)}${page != null ? `#page=${encodeURIComponent(page)}` : ""}`;
+      excerpt.append(h("a", { class: "excerpt-link", href, target: "_blank", rel: "noopener" },
+        page != null ? T.openPdf(page) : T.openDoc, svg(ICON_EXT)));
+    }
+    const label = page != null
+      ? `[${c.n}] ${file} · ${DE ? "S." : "p."} ${page}`
+      : `[${c.n}] ${file} · chunk ${c.chunk_index} · ${score}`;
     const chip = h("button", {
-      type: "button", class: "chip cite-chip", "aria-expanded": "false", "data-n": c.n,
-      title: c.file_name,
+      type: "button", class: "chip cite-chip", "aria-expanded": "false", "aria-controls": excerptId, "data-n": c.n,
+      title: page != null && typeof c.score === "number" ? `${file} · ${score}` : file,
       onclick: () => {
         const open = excerpt.hidden;
         excerpt.hidden = !open;
         chip.setAttribute("aria-expanded", String(open));
       },
-    }, `[${c.n}] ${c.file_name} · chunk ${c.chunk_index} · ${score}`);
+    }, label);
     return h("div", { class: "cite" }, chip, excerpt);
   }));
 }
@@ -367,7 +501,7 @@ async function sendMessage() {
   const controller = new AbortController();
   state.controller = controller;
   setStreaming(true);
-  let answer = "", frame = 0;
+  let answer = "", frame = 0, started = false;
   const paint = () => { frame = 0; botNode._body.innerHTML = renderMarkdown(answer); scrollToBottom(); };
 
   try {
@@ -375,23 +509,40 @@ async function sendMessage() {
       method: "POST", headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
       body: JSON.stringify({ message: text }), signal: controller.signal,
     });
-    if (!res.ok) throw await errorFrom(res);
+    if (!res.ok) {
+      const err = await errorFrom(res);
+      if (err.status === 429) err.message = err.detail = T.tooMany;
+      throw err;
+    }
+    started = true;
     for await (const { event, data } of sseEvents(res)) {
       if (event === "citations") renderCitations(botNode, Array.isArray(data) ? data : []);
       else if (event === "token") { answer += (data && data.text) || ""; if (!frame) frame = requestAnimationFrame(paint); }
       else if (event === "done") {
+        if (data && data.refused) markRefused(botNode);
         const t = state.threads.find((x) => x.id === threadId);
-        if (t && data && data.title) { t.title = data.title; if (state.currentId === threadId) el.title.textContent = data.title; }
+        if (t && data && data.title) { t.title = data.title; if (state.currentId === threadId) el.title.textContent = headerTitle(data.title); }
         if (t) { t.updated_at = Date.now() / 1000; state.threads = [t, ...state.threads.filter((x) => x !== t)]; }
         renderThreads();
       } else if (event === "error") throw new ApiError(500, formatDetail(data && data.detail, "Generation failed"));
     }
   } catch (e) {
     if (e.name === "AbortError") answer += answer ? "\n\n*[stopped]*" : "*[stopped]*";
+    else if (isKb() && !started && (e.status === 429 || e.status === 400)) {
+      // Rejected before streaming (rate limit / invalid question): nothing was answered, so drop the
+      // placeholder bubbles and give the question back to the user.
+      toast(e.message);
+      if (frame) { cancelAnimationFrame(frame); frame = 0; }
+      userNode.remove(); botNode.remove();
+      if (!el.input.value) { el.input.value = text; autosize(); }
+      el.emptyState.hidden = !!el.messages.querySelector(".msg");
+      if (state.controller === controller) { state.controller = null; setStreaming(false); }
+      return;
+    }
     else { toast(e.message); botNode.classList.add("error"); if (!answer) answer = `*Error: ${e.message}*`; }
   } finally {
     if (frame) cancelAnimationFrame(frame);
-    paint();
+    if (botNode.isConnected) paint();
     botNode.classList.remove("streaming");
     if (state.controller === controller) { state.controller = null; setStreaming(false); }
   }
@@ -421,7 +572,7 @@ function renderAttachments() {
     h("span", { class: "spinner", "aria-hidden": "true" }), h("span", { class: "file-name" }, u.name),
     h("span", { class: "badge" }, "uploading…")));
   el.attachments.replaceChildren(...chips, ...pending);
-  el.attachments.hidden = chips.length + pending.length === 0;
+  el.attachments.hidden = isKb() || chips.length + pending.length === 0;
 }
 
 async function removeFile(f) {
@@ -446,7 +597,7 @@ function askParseMode(name) {
 
 async function uploadFiles(fileList) {
   const files = [...fileList];
-  if (!files.length) return;
+  if (!files.length || isKb()) return;
   if (state.settings && state.settings.enabled === false) { toast("Attachments are disabled in settings"); return; }
   if (!state.settings) await loadSettings();
   for (const file of files) {
@@ -502,12 +653,21 @@ async function saveSettings(e) {
     if (Number.isNaN(n)) { showSettingsError(`${k} must be a number`); return; }
     payload[k] = n;
   }
+  let headers;
+  if (isKb()) {
+    const tok = getAdminToken();
+    if (!tok) { showSettingsError(T.tokenMissing); return; }
+    headers = { "X-Admin-Token": tok };
+  }
   try {
-    state.settings = await api("/settings", { method: "PUT", json: payload });
+    state.settings = await api("/settings", { method: "PUT", json: payload, headers });
     updateAttachEnabled();
     el.settingsDialog.close();
     toast("Settings saved", "ok");
-  } catch (err) { showSettingsError(err.message); }
+  } catch (err) {
+    if (isKb() && (err.status === 401 || err.status === 403)) { clearAdminToken(); showSettingsError(`${T.tokenBad} (${err.message})`); }
+    else showSettingsError(err.message);
+  }
 }
 
 function showSettingsError(msg) { el.settingsError.textContent = msg; el.settingsError.hidden = false; }
@@ -536,11 +696,12 @@ function bindEvents() {
   });
   el.input.addEventListener("input", autosize);
   el.stopBtn.addEventListener("click", stopStreaming);
-  el.attachBtn.addEventListener("click", () => el.fileInput.click());
+  el.attachBtn.addEventListener("click", () => { if (!isKb()) el.fileInput.click(); });
   el.fileInput.addEventListener("change", () => { const fl = [...el.fileInput.files]; el.fileInput.value = ""; uploadFiles(fl); });
 
   let depth = 0;
-  const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
+  // In kb mode drag-and-drop is ignored entirely (no overlay, no preventDefault, no upload).
+  const hasFiles = (e) => !isKb() && [...(e.dataTransfer?.types || [])].includes("Files");
   el.main.addEventListener("dragenter", (e) => { if (!hasFiles(e)) return; e.preventDefault(); depth++; el.dropOverlay.hidden = false; });
   el.main.addEventListener("dragover", (e) => { if (hasFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; } });
   el.main.addEventListener("dragleave", () => { depth = Math.max(0, depth - 1); if (!depth) el.dropOverlay.hidden = true; });
@@ -549,6 +710,15 @@ function bindEvents() {
     e.preventDefault(); depth = 0; el.dropOverlay.hidden = true;
     uploadFiles(e.dataTransfer.files);
   });
+  // kb mode: swallow file drops so the browser doesn't navigate away to the dropped file.
+  const isFileDrag = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
+  for (const type of ["dragover", "drop"]) {
+    window.addEventListener(type, (e) => {
+      if (!isKb() || !isFileDrag(e)) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "none";
+    });
+  }
 }
 
 async function init() {

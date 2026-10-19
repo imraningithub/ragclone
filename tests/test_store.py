@@ -1,6 +1,8 @@
 import math
+import sqlite3
 import threading
 
+import numpy as np
 import pytest
 
 from app.store import DimensionMismatch, DuplicateFile, NotFound, VectorStore, _vec_table
@@ -123,7 +125,8 @@ def test_insert_and_get_chunks(store):
     all_chunks = store.get_chunks("c", fid)
     assert [c["chunk_index"] for c in all_chunks] == [0, 1, 2, 3]
     assert [c["text"] for c in all_chunks] == ["c0", "c1", "c2", "c3"]
-    assert set(all_chunks[0]) == {"id", "file_id", "chunk_index", "text"}
+    assert set(all_chunks[0]) == {"id", "file_id", "chunk_index", "text", "meta"}
+    assert all_chunks[0]["meta"] == {}
     assert [c["text"] for c in store.get_chunks("c", fid, 1, 3)] == ["c1", "c2"]
     assert [c["text"] for c in store.get_chunks("c", fid, 2)] == ["c2", "c3"]
     assert store.get_chunks("c", fid, 10) == []
@@ -164,7 +167,7 @@ def test_search_top_hit(mstore):
     assert hits[0]["text"] == "x-axis" and hits[0]["file_id"] == fa
     assert hits[0]["file_name"] == "a.txt" and hits[0]["chunk_index"] == 0
     assert hits[0]["score"] == pytest.approx(1.0, abs=1e-5)
-    assert set(hits[0]) == {"chunk_id", "file_id", "file_name", "chunk_index", "text", "score"}
+    assert set(hits[0]) == {"chunk_id", "file_id", "file_name", "chunk_index", "text", "score", "meta"}
     assert [h["text"] for h in hits] == ["x-axis", "xy"]  # orthogonal chunks (score 0) dropped
     scores = [h["score"] for h in hits]
     assert scores == sorted(scores, reverse=True)
@@ -284,3 +287,48 @@ def test_concurrent_inserts(store):
         t.join()
     assert store.get_file("c", fid)["chunk_count"] == 80
     assert [c["chunk_index"] for c in store.get_chunks("c", fid)] == list(range(80))
+
+
+# ----------------------------------------------------------------------- meta
+def test_meta_round_trip(mstore):
+    mstore.create_collection("c", 2, "m")
+    fid = mstore.add_file("c", name="a.pdf", path="/a", type="application/pdf", size=1, mode="embeddings")
+    mstore.insert_chunks("c", fid, ["p1", "p2", "none"], [[1, 0], [0, 1], [1, 1]],
+                         metas=[{"page": 1}, {"page": 2, "title": "Prüfung"}, {}])
+    assert [c["meta"] for c in mstore.get_chunks("c", fid)] == [{"page": 1}, {"page": 2, "title": "Prüfung"}, {}]
+    hits = mstore.search("c", [0, 1], limit=3, threshold=-1, mode=mstore.mode)
+    assert hits[0]["text"] == "p2" and hits[0]["meta"] == {"page": 2, "title": "Prüfung"}
+    assert {h["text"]: h["meta"] for h in hits}["none"] == {}
+    with pytest.raises(ValueError):
+        mstore.insert_chunks("c", fid, ["x"], [[1, 0]], metas=[{}, {}])
+
+
+def test_meta_column_added_to_old_db(tmp_path):
+    db = str(tmp_path / "old.db")
+    conn = sqlite3.connect(db)
+    conn.executescript("""
+        CREATE TABLE collections (name TEXT PRIMARY KEY, dim INTEGER NOT NULL,
+            embed_model TEXT NOT NULL DEFAULT '', created_at REAL NOT NULL);
+        CREATE TABLE files (id TEXT PRIMARY KEY, collection TEXT NOT NULL, name TEXT NOT NULL,
+            path TEXT NOT NULL, type TEXT NOT NULL DEFAULT '', size INTEGER NOT NULL DEFAULT 0,
+            mode TEXT NOT NULL, chunk_count INTEGER NOT NULL DEFAULT 0, inline_text TEXT,
+            created_at REAL NOT NULL, UNIQUE(collection, name, path));
+        CREATE TABLE chunks (rowid INTEGER PRIMARY KEY, id TEXT NOT NULL UNIQUE, collection TEXT NOT NULL,
+            file_id TEXT NOT NULL, chunk_index INTEGER NOT NULL, text TEXT NOT NULL, embedding BLOB NOT NULL);
+    """)
+    conn.execute("INSERT INTO collections VALUES ('c', 2, 'm', 0)")
+    conn.execute("INSERT INTO files VALUES ('f1', 'c', 'a', '/a', 't', 1, 'embeddings', 1, NULL, 0)")
+    conn.execute("INSERT INTO chunks VALUES (1, 'k1', 'c', 'f1', 0, 'old', ?)",
+                 (np.array([1, 0], dtype=np.float32).tobytes(),))
+    conn.commit()
+    conn.close()
+
+    s = VectorStore(db, enable_ann=False)
+    cols = {r[1] for r in s._conn.execute("PRAGMA table_info(chunks)").fetchall()}
+    assert "meta" in cols
+    assert s.get_chunks("c", "f1")[0]["meta"] == {}
+    assert s.search("c", [1, 0], threshold=-1)[0]["meta"] == {}
+    s.insert_chunks("c", "f1", ["new"], [[0, 1]], metas=[{"page": 7}])
+    assert s.get_chunks("c", "f1")[1]["meta"] == {"page": 7}
+    s.close()
+    VectorStore(db, enable_ann=False).close()  # reopening a migrated DB is a no-op

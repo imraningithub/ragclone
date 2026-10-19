@@ -1,11 +1,13 @@
 """Document ingest (inline vs embeddings) and prompt building with citations."""
 from __future__ import annotations
 
+import mimetypes
 import os
+from pathlib import Path
 
 from .chunking import chunk_text
 from .config import RagSettings, Settings
-from .parsing import parse_document
+from .parsing import parse_document, parse_pdf_pages
 
 EMBED_BATCH = 64
 
@@ -84,16 +86,55 @@ def ingest_file(store, provider, settings: Settings, rag: RagSettings, *, collec
                                  mode="embeddings")
         return _file_info(store, collection, fid)
 
-    embeddings: list[list[float]] = []
-    for i in range(0, len(chunks), EMBED_BATCH):
-        embeddings.extend(provider.embed(chunks[i:i + EMBED_BATCH]))
-    if len(embeddings) != len(chunks) or not embeddings or not embeddings[0]:
-        raise ValueError("embedding is empty")
+    embeddings = _embed_all(provider, chunks)
 
     store.create_collection(collection, len(embeddings[0]), provider.embed_model)
     fid = store.add_file(collection, name=name, path=path, type=file_type, size=size, mode="embeddings")
     try:
         store.insert_chunks(collection, fid, chunks, embeddings)
+    except Exception:
+        store.delete_file(collection, fid)
+        raise
+    return _file_info(store, collection, fid)
+
+
+def _embed_all(provider, texts: list[str]) -> list[list[float]]:
+    embeddings: list[list[float]] = []
+    for i in range(0, len(texts), EMBED_BATCH):
+        embeddings.extend(provider.embed(texts[i:i + EMBED_BATCH]))
+    if len(embeddings) != len(texts) or not embeddings or not embeddings[0]:
+        raise ValueError("embedding is empty")
+    return embeddings
+
+
+def ingest_kb_file(store, provider, settings: Settings, *, collection: str, path: str, name: str) -> dict:
+    """Ingest one knowledge-base file, always in embeddings mode.
+
+    PDFs are chunked page by page so every chunk knows its page ({"page": n} in its meta) and
+    citations can link to it. Other types are chunked as a whole with an empty meta.
+    """
+    size = os.path.getsize(path)
+    file_type = mimetypes.guess_type(name)[0] or ""
+    chunks: list[str] = []
+    metas: list[dict] = []
+    if Path(path).suffix.lower() == ".pdf":
+        file_type = "application/pdf"
+        for page, text in parse_pdf_pages(path):
+            for c in chunk_text(text, int(settings.kb_chunk_size), int(settings.kb_overlap)):
+                chunks.append(c)
+                metas.append({"page": page})
+    else:
+        text = parse_document(path, file_type or None)
+        chunks = chunk_text(text, int(settings.kb_chunk_size), int(settings.kb_overlap))
+        metas = [{} for _ in chunks]
+    if not chunks:
+        raise ValueError("no extractable text")  # e.g. a scanned PDF without OCR
+
+    embeddings = _embed_all(provider, chunks)
+    store.create_collection(collection, len(embeddings[0]), provider.embed_model)
+    fid = store.add_file(collection, name=name, path=path, type=file_type, size=size, mode="embeddings")
+    try:
+        store.insert_chunks(collection, fid, chunks, embeddings, metas)
     except Exception:
         store.delete_file(collection, fid)
         raise

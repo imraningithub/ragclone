@@ -127,3 +127,109 @@ Chat SSE events (each `event: <name>\ndata: <json>\n\n`):
 4. `error` → `{"detail": "..."}` then stream ends.
 The user message is saved before streaming; the assistant message (with citations) is saved when done.
 Uploaded files are saved under `data/uploads/<thread_id>/<file_id>_<name>` (the store `path` field).
+
+---
+
+# KB mode (DTM Studienassistent) — additional contracts
+
+Settings (app/config.py, done): `app_mode` ("chat"|"kb"), `kb_name`, `kb_dir`, `kb_collection` (= "kb_<kb_name>"),
+`refusal_contact`, `chat_temperature`, `admin_token`, `rate_limit_per_min` (0=off), `kb_chunk_size` (1000),
+`kb_overlap` (150), `kb_top_k` (6), `kb_threshold` (0.2), `kb_log_path`. All have defaults, so existing
+`Settings(...)` constructions in tests keep working.
+
+## app/parsing.py (agent A)
+```python
+def normalize_pdf_text(text: str) -> str      # rejoin "Prü-\nfung" -> "Prüfung" (lowercase continuation only),
+                                              # join single wrapped lines inside paragraphs, keep blank-line paragraphs,
+                                              # keep lines that look like list items / headings (start with -, •, digit+'.' , '§')
+def parse_pdf_pages(path: str) -> list[tuple[int, str]]   # 1-based page numbers, normalized text, blank pages skipped
+```
+`parse_document` output for PDFs stays as today (no normalization) so existing behaviour/tests don't change.
+
+## app/store.py (agent A)
+- New nullable `meta TEXT` (JSON) column on `chunks`; added via `ALTER TABLE` when missing (old DBs keep working).
+- `insert_chunks(collection, file_id, texts, embeddings, metas: list[dict] | None = None)`.
+- SearchHit and ChunkInfo gain `"meta": dict` (`{}` when NULL). Everything else unchanged.
+
+## app/rag.py (agent A)
+```python
+def ingest_kb_file(store, provider, settings, *, collection: str, path: str, name: str) -> dict  # FileInfo
+```
+- Always embeddings mode. PDFs: `parse_pdf_pages`, chunk each page separately with
+  `chunk_text(page_text, settings.kb_chunk_size, settings.kb_overlap)`, meta `{"page": n}`.
+  Other types: `parse_document` + chunk, meta `{}`. Embed in batches of 64, `create_collection`, `add_file`, `insert_chunks`.
+- Empty text -> ValueError("no extractable text") (KB files must have text).
+
+## scripts/ingest_kb.py (agent A)
+`python scripts/ingest_kb.py [--rebuild] [--dir PATH]` — ingests every supported file in `settings.kb_dir` into
+`settings.kb_collection`. Manifest `data/kb_manifest.json` maps file name -> sha256; unchanged files are skipped,
+changed ones re-ingested (delete_file + ingest), files removed from the folder are deleted from the store.
+Prints one line per file: name, pages, chunks, status (new/updated/unchanged/removed).
+
+## app/providers.py (agent B)
+```python
+def chat_stream(self, messages, temperature: float | None = None) -> Iterator[str]
+def complete(self, messages, *, json_mode: bool = False, temperature: float | None = None) -> str
+```
+OpenAI: `complete` uses `response_format={"type": "json_object"}` when json_mode. FakeProvider.complete: if json_mode,
+return a JSON plan `{"standalone": <last user msg>, "language": "en" if it looks English else "de", "queries_de": [<last user msg>]}`;
+otherwise return an answer that cites `[1]` when the system prompt contains `<excerpt`, else `NO_ANSWER`.
+
+## app/retrieval.py (agent B)
+```python
+def plan_query(provider, history: list[dict], question: str) -> dict
+    # {"standalone": str, "language": "de"|"en"|..., "queries_de": list[str] (1-3)}; falls back to
+    # {"standalone": question, "language": guess_language(question), "queries_de": [question]} on any error/bad JSON
+def guess_language(text: str) -> str                         # cheap heuristic "de"/"en"
+def retrieve(store, provider, *, collection: str, plan: dict, question: str, top_k: int, threshold: float) -> list[dict]
+    # embeds [question, standalone, *queries_de] (deduped) in one call, searches each (mode "auto"),
+    # merges by chunk_id keeping max score, sorts desc, returns top_k SearchHits (with meta)
+```
+
+## app/guardrails.py (agent B)
+```python
+MAX_QUESTION_CHARS = 1000
+NO_ANSWER = "NO_ANSWER"
+def validate_question(text: str) -> str                      # strip; ValueError if empty or too long
+class RateLimiter: __init__(per_minute: int); allow(key: str) -> bool   # per_minute <= 0 -> always True
+def refusal_text(language: str, contact: str) -> str         # German for "de", English otherwise
+SYSTEM_PROMPT: str                                           # strict grounding rules (see plan §4.3)
+def build_kb_messages(*, question: str, plan: dict, hits: list[dict], history: list[dict]) -> tuple[list[dict], list[dict]]
+    # excerpts as <excerpt id="n" doc="file" page="p">text</excerpt> inside the system message;
+    # citations: [{"n","file_id","file_name","page","chunk_index","score","text"}]
+def finalize_answer(text: str, citations: list[dict], *, language: str, contact: str) -> tuple[str, str | None]
+    # returns (final_text, refusal_reason). reason: "no_answer" (model said NO_ANSWER / mostly NO_ANSWER),
+    # "uncited" (no valid [n] with 1<=n<=len(citations)), None when accepted. Refusals return refusal_text(...).
+def log_event(path, record: dict) -> None                    # append JSON line, never raises
+```
+
+## app/main.py in kb mode (agent C)
+- `settings.app_mode == "kb"`:
+  - `POST/DELETE /api/threads/{id}/files*` -> 403 {"detail": "Uploads are disabled in this assistant"}.
+  - `PUT /api/settings` -> 403 unless header `X-Admin-Token` equals `settings.admin_token` (if no token set: 403).
+  - `GET /kb/{name}` serves a file from `settings.kb_dir` (name must be a plain file name present in the folder; else 404).
+  - `GET /api/status` adds `"mode"`, `"kb_name"`, `"refusal_contact"`, `"documents": [{"name","chunk_count"}]`.
+    (In chat mode it adds `"mode": "chat"` only.)
+  - `POST /api/threads/{id}/chat`: validate_question (400), RateLimiter by client IP (429), plan_query(history),
+    retrieve(top_k=kb_top_k, threshold=kb_threshold). No hits -> refusal without calling the chat model.
+    Else build_kb_messages -> provider.complete(temperature=chat_temperature) (buffered) -> finalize_answer.
+    SSE: `citations` (`[]` if refused), `token` events (stream the final text in small word groups), `done`
+    (`{"message_id","title","refused": reason|null}`). Save user + assistant messages (citations only if accepted).
+    log_event(kb_log_path, {ts, thread_id, question, plan, hits:[{file,page,score}], reason, answer}).
+- Chat mode behaviour unchanged.
+
+## Web UI in kb mode (agent D)
+Status `mode == "kb"`: hide attach button, drag-drop, file chips; title "DTM Studienassistent"; disclaimer under the
+composer (DE/EN by `navigator.language`); empty state with 4 example question chips that send on click; citation chips
+show `file · S. page` (EN: `p.`) and the expanded excerpt has a link `/kb/<file>#page=<page>` (target _blank);
+settings gear hidden unless URL has `?admin=1`. `done.refused` -> style the message as a muted "info" bubble.
+
+## KB mode — changes made during tuning (supersede the text above where they differ)
+- `plan_query(provider, history, question, model=None)` also returns `queries_en`; the documents are mostly English.
+- `retrieve(..., max_per_file=4)` is hybrid: vector + `VectorStore.keyword_search` (FTS5/BM25, weight 0.5), RRF fusion,
+  cosine gate on the best similarity, programme name stripped from search queries. Hits carry `score` (cosine) and `rrf`.
+- `VectorStore.keyword_search(collection, query, limit, file_ids=None)` and `score_chunks(collection, emb, ids)`;
+  the `chunks_fts` index is kept in sync by triggers.
+- `provider.complete(..., model=None)`; KB mode uses `settings.kb_chat_model` (default gpt-4.1) for plan + answer.
+- `guardrails.cited_only(answer, citations)`: the API sends only cited sources. The binding line is forced into the
+  answer language. KB mode stores chats in `data/kb_threads.db`. `parse_pdf_pages` uses pypdfium2 (pypdf fallback).

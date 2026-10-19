@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -59,6 +60,86 @@ class _TextExtractor(HTMLParser):
     def handle_data(self, data: str) -> None:
         if not self._skip:
             self.parts.append(data)
+
+
+# A line that starts a list item, numbered heading or legal paragraph keeps its line break:
+# "- x", "• x", "– x", "§ 3", "(1)", "(a)", "1. x", "2.3 Titel", "a) x".
+_LIST_START = re.compile(
+    r"^(?:[-–—*]\s|[•▪●◦·]|§|\(\w{1,4}\)|\d{1,3}\.(?:\d{1,3}\.?)*\s|[a-zA-Z]\)\s)"
+)
+# Hyphen at a line end right after a letter ("Prü-"), not a free-standing dash ("Beginn -").
+_HYPHEN_END = re.compile(r"[^\W\d_]-$")
+# "Lehr-" + "und Lernformen" is a suspended compound, not a split word: keep "Lehr- und".
+_SUSPENDED = re.compile(r"^(?:und|oder|bzw\.|sowie|bis)\b")
+_LIGATURES = {"ﬀ": "ff", "ﬁ": "fi", "ﬂ": "fl", "ﬃ": "ffi", "ﬄ": "ffl"}
+
+
+def _join_lines(lines: list[str]) -> str:
+    out = lines[0]
+    for line in lines[1:]:
+        if _LIST_START.match(line):
+            out += "\n" + line
+        elif _HYPHEN_END.search(out):
+            if _SUSPENDED.match(line):
+                out += " " + line  # "Lehr- und Lernformen"
+            elif line[:1].islower():
+                out = out[:-1] + line  # "Prü-" + "fungsordnung"
+            else:
+                out += line  # "Bachelor-" + "Studiengang" keeps the hyphen
+        else:
+            out += " " + line
+    return out
+
+
+def normalize_pdf_text(text: str) -> str:
+    """Undo pypdf's hard line wrapping in (German) PDFs.
+
+    Hyphenated line ends are rejoined (the hyphen is dropped only before a lowercase continuation),
+    wrapped lines inside a paragraph are joined with a space, blank-line paragraph breaks are kept,
+    and lines that start a list item, numbered heading or § stay on their own line.
+    """
+    # pdfium marks a line-end hyphen as U+FFFE (often without the newline); restore "-\n" for the rules below.
+    text = re.sub("￾\r?\n?", "-\n", text)
+    text = unicodedata.normalize("NFC", text)  # decomposed umlauts (a + U+0308) -> ä
+    for lig, repl in _LIGATURES.items():
+        text = text.replace(lig, repl)
+    text = text.replace("\r\n", "\n").replace("\r", "\n").replace("­", "").replace(" ", " ")
+    paragraphs = []
+    for block in re.split(r"\n[ \t]*\n", text):
+        lines = [re.sub(r"[ \t]+", " ", ln).strip() for ln in block.split("\n")]
+        lines = [ln for ln in lines if ln]
+        if lines:
+            paragraphs.append(_join_lines(lines))
+    return "\n\n".join(paragraphs)
+
+
+def parse_pdf_pages(path: str) -> list[tuple[int, str]]:
+    """Return (1-based page number, normalized text) for every page that has text."""
+    try:
+        raw = _pdfium_pages(path)
+    except Exception:
+        # pdfium is preferred: pypdf splits words in some German PDFs ("Ges amtumfang").
+        try:
+            reader = pypdf.PdfReader(path)
+            raw = [page.extract_text() or "" for page in reader.pages]
+        except Exception as exc:  # pypdf raises many unrelated error types on corrupt files
+            raise ParseError(f"could not read {Path(path).name}: {exc}") from exc
+    pages = []
+    for n, text in enumerate(raw, start=1):
+        text = normalize_pdf_text(text)
+        if text:
+            pages.append((n, text))
+    return pages
+
+
+def _pdfium_pages(path: str) -> list[str]:
+    import pypdfium2 as pdfium  # optional dependency; parse_pdf_pages falls back to pypdf
+
+    doc = pdfium.PdfDocument(path)
+    try:
+        return [doc[i].get_textpage().get_text_range().replace("\r\n", "\n") for i in range(len(doc))]
+    finally:
+        doc.close()
 
 
 def _pdf(path: str) -> str:

@@ -2,7 +2,8 @@ import pandas as pd
 import pypdf
 import pytest
 
-from app.parsing import ParseError, UnsupportedFileType, parse_document
+from app.parsing import (ParseError, UnsupportedFileType, normalize_pdf_text, parse_document,
+                         parse_pdf_pages)
 
 
 def _blank_pdf(path):
@@ -108,3 +109,74 @@ def test_unknown_extension_and_mime_raises(tmp_path):
     path.write_text("x", encoding="utf-8")
     with pytest.raises(UnsupportedFileType):
         parse_document(str(path), "application/octet-stream")
+
+
+# ------------------------------------------------------------- KB-mode PDFs
+def test_normalize_hyphen_before_lowercase_is_removed():
+    assert normalize_pdf_text("Die Prü-\nfungsordnung gilt.") == "Die Prüfungsordnung gilt."
+
+
+def test_normalize_hyphen_before_uppercase_is_kept():
+    assert normalize_pdf_text("im Bachelor-\nStudiengang") == "im Bachelor-Studiengang"
+
+
+def test_normalize_suspended_compound_keeps_space():
+    assert normalize_pdf_text("Lehr-\nund Lernformen") == "Lehr- und Lernformen"
+
+
+def test_normalize_joins_wrapped_lines_and_whitespace():
+    assert normalize_pdf_text("Das Semester\n  beginnt   im\nOktober.\r\n") == "Das Semester beginnt im Oktober."
+
+
+def test_normalize_keeps_list_items_and_headings():
+    text = ("Voraussetzungen sind:\n- Abitur\n• Sprachnachweis\n– Praktikum\n§ 3 Prüfungen\n"
+            "(1) Die Prüfung\nwird schriftlich abgelegt.\n2. Wiederholung\na) einmal\n4.1 Fristen")
+    assert normalize_pdf_text(text).split("\n") == [
+        "Voraussetzungen sind:", "- Abitur", "• Sprachnachweis", "– Praktikum", "§ 3 Prüfungen",
+        "(1) Die Prüfung wird schriftlich abgelegt.", "2. Wiederholung", "a) einmal", "4.1 Fristen",
+    ]
+
+
+def test_normalize_keeps_paragraphs_and_plain_numbers():
+    text = "Erster Absatz\nzweite Zeile.\n\n \nZweiter Absatz im\n2025 Jahr."
+    assert normalize_pdf_text(text) == "Erster Absatz zweite Zeile.\n\nZweiter Absatz im 2025 Jahr."
+
+
+def test_normalize_umlauts_and_unicode_cleanup():
+    decomposed = "Größe Prüfung"  # "ö"/"ü" as base letter + combining diaeresis
+    assert normalize_pdf_text(decomposed) == "Größe Prüfung"
+    assert normalize_pdf_text("Zu­lassung ﬁnden Äußerung") == "Zulassung finden Äußerung"
+
+
+def _multipage_pdf(path):
+    from fpdf import FPDF
+
+    pdf = FPDF()
+    pdf.set_font("Helvetica", size=12)
+    pdf.add_page()
+    pdf.multi_cell(0, 8, "Die Prü-\nfungsordnung regelt\ndas Studium.")
+    pdf.add_page()  # blank page 2
+    pdf.add_page()
+    pdf.multi_cell(0, 8, "Größe und Maß\n- erster Punkt")
+    pdf.output(str(path))
+    return str(path)
+
+
+def test_parse_pdf_pages_numbers_and_skips_blank(tmp_path):
+    pages = parse_pdf_pages(_multipage_pdf(tmp_path / "ordnung.pdf"))
+    assert [n for n, _ in pages] == [1, 3]
+    assert pages[0][1] == "Die Prüfungsordnung regelt das Studium."
+    assert "Größe und Maß\n- erster Punkt" == pages[1][1]
+
+
+def test_parse_pdf_pages_blank_and_corrupt(tmp_path):
+    assert parse_pdf_pages(_blank_pdf(tmp_path / "blank.pdf")) == []
+    bad = tmp_path / "bad.pdf"
+    bad.write_bytes(b"not a pdf")
+    with pytest.raises(ParseError):
+        parse_pdf_pages(str(bad))
+
+
+def test_parse_document_pdf_is_not_normalized(tmp_path):
+    text = parse_document(_multipage_pdf(tmp_path / "raw.pdf"))
+    assert "Prü-\nfungsordnung" in text

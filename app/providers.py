@@ -16,7 +16,8 @@ class Provider(Protocol):
     embed_model: str
 
     def embed(self, texts: list[str]) -> list[list[float]]: ...
-    def chat_stream(self, messages: list[dict], temperature: float | None = None) -> Iterator[str]: ...
+    def chat_stream(self, messages: list[dict], temperature: float | None = None,
+                    model: str | None = None) -> Iterator[str]: ...
     def complete(self, messages: list[dict], *, json_mode: bool = False,
                  temperature: float | None = None, model: str | None = None) -> str: ...
     def count_tokens(self, text: str) -> int: ...
@@ -47,12 +48,13 @@ class OpenAIProvider:
         resp = self.client.embeddings.create(model=self.embed_model, input=texts)
         return [d.embedding for d in sorted(resp.data, key=lambda d: d.index)]
 
-    def chat_stream(self, messages: list[dict], temperature: float | None = None) -> Iterator[str]:
+    def chat_stream(self, messages: list[dict], temperature: float | None = None,
+                    model: str | None = None) -> Iterator[str]:
         kwargs: dict = {}
         if temperature is not None:
             kwargs["temperature"] = temperature
         stream = self.client.chat.completions.create(
-            model=self.chat_model, messages=messages, stream=True, **kwargs
+            model=model or self.chat_model, messages=messages, stream=True, **kwargs
         )
         for event in stream:
             if event.choices and event.choices[0].delta and event.choices[0].delta.content:
@@ -93,9 +95,13 @@ class FakeProvider:
             out.append([x / n for x in v])
         return out
 
-    def chat_stream(self, messages: list[dict], temperature: float | None = None) -> Iterator[str]:
+    def chat_stream(self, messages: list[dict], temperature: float | None = None,
+                    model: str | None = None) -> Iterator[str]:
         system = "\n".join(m["content"] for m in messages if m["role"] == "system")
         user = messages[-1]["content"] if messages else ""
+        if "<excerpt" in system:  # KB answer: stream the same text complete() would return
+            yield from re.findall(r"\s*\S+", self.complete(messages, temperature=temperature, model=model))
+            return
         reply = f"(fake) You asked: {user}. Context chars: {len(system)}."
         for word in reply.split(" "):
             yield word + " "

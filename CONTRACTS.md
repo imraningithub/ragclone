@@ -233,3 +233,24 @@ settings gear hidden unless URL has `?admin=1`. `done.refused` -> style the mess
 - `provider.complete(..., model=None)`; KB mode uses `settings.kb_chat_model` (default gpt-4.1) for plan + answer.
 - `guardrails.cited_only(answer, citations)`: the API sends only cited sources. The binding line is forced into the
   answer language. KB mode stores chats in `data/kb_threads.db`. `parse_pdf_pages` uses pypdfium2 (pypdf fallback).
+
+## KB mode — streaming answers and per-visitor threads (supersede the text above where they differ)
+- Settings: `kb_plan_model` (`KB_PLAN_MODEL`, default `gpt-4.1-mini`) is used by `plan_query`; `kb_chat_model` only for
+  the answer. `rate_limit_per_min` counts per visitor (owner id, IP when missing); `rate_limit_ip_per_min`
+  (`RATE_LIMIT_IP_PER_MIN`, 0 = off) counts per client IP. Either one exceeded -> 429.
+- `provider.chat_stream(messages, temperature=None, model=None)`. FakeProvider streams its KB answer when the system
+  prompt contains `<excerpt`.
+- `guardrails.StreamGate(n_citations, language)`: `feed(token) -> str`, `flush() -> str` return text that may be shown
+  now; `raw` (all model output), `sent` (released, cleaned like `finalize_answer`), `stuck`. Releases nothing until a
+  valid `[n]` and no NO_ANSWER marker are present; holds back a trailing open `[` and trailing whitespace.
+- `POST /api/threads/{id}/chat` in kb mode: plan + retrieval + the first answer chunk happen before the response
+  starts (provider errors there -> 502). SSE order: `token`* (released text; for refusals the fixed refusal text in
+  word groups), optional `reset` `{"text": final}` (replaces everything shown so far), `citations` (cited sources,
+  `[]` when refused), `done` `{"message_id","title","refused"}`. A provider error mid-stream -> `error` and nothing is
+  saved. User + assistant messages are saved and the log line written only after the answer is complete; the log
+  record adds `timing: {plan_s, retrieve_s, first_token_s, total_s}`.
+- Visitors: kb mode middleware gives every request `request.state.owner` = sha256 of the `dtm_client` cookie
+  (random `secrets.token_urlsafe(32)`, set when missing/malformed: httpOnly, SameSite=Lax, Secure on https, 1 year).
+  `ThreadStore.create(title, owner=None)`, `list(owner=None)`, `get(id, owner=None)`; with an owner, other owners'
+  threads raise KeyError (-> 404 for get/patch/delete/files/chat). `threads.owner` column is added to old DBs; their
+  threads keep owner NULL. Chat mode passes no owner (unscoped, no cookie).

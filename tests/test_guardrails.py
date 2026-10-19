@@ -209,3 +209,38 @@ def test_cited_only_keeps_referenced_sources():
     cites = [{"n": i} for i in range(1, 9)]
     assert [c["n"] for c in cited_only("A [5] B [7]. C [2, 3] D [1][4]", cites)] == [1, 2, 3, 4, 5, 7]
     assert cited_only("no citations here", cites) == []
+
+
+def _gate_run(text, n=2, language="de"):
+    gate = g.StreamGate(n, language)
+    shown = "".join(gate.feed(piece) for piece in __import__("re").findall(r"\s*\S+", text)) + gate.flush()
+    return gate, shown
+
+
+def test_stream_gate_holds_back_until_first_valid_citation():
+    gate = g.StreamGate(2, "de")
+    assert gate.feed("Die Anmeldung") == "" and gate.feed(" erfolgt online") == ""
+    assert gate.feed(" [1") == ""  # incomplete citation
+    assert gate.feed("]") == "Die Anmeldung erfolgt online [1]"
+    assert gate.feed(" bis Mai") == " bis Mai"
+    assert gate.feed(" ") == ""  # held back: an invalid citation also removes the space before it
+    assert gate.feed("[7]") == ""
+    assert gate.feed(".") == "."
+    assert gate.flush() == "" and gate.sent == "Die Anmeldung erfolgt online [1] bis Mai."
+
+
+def test_stream_gate_matches_finalize_answer():
+    for text in ["Online [1] bis Mai [5]. Mehr [1, 5] und [2].",
+                 "Antwort [2].\nThe official documents are binding.",
+                 "Die Anmeldung erfolgt online im Campusportal [1]. Zum Rest: NO_ANSWER"]:
+        gate, shown = _gate_run(text)
+        final, reason = finalize_answer(text, [{}, {}], language="de", contact=CONTACT)
+        assert reason is None
+        # stuck = a released prefix was later rewritten; the API then sends a "reset" with `final`
+        assert shown == gate.sent and (shown == final) != gate.stuck
+
+
+@pytest.mark.parametrize("text", ["NO_ANSWER", "NO_ANSWER [1]", "kein Beleg", "Antwort [3]", ""])
+def test_stream_gate_releases_nothing_for_refusals(text):
+    _, shown = _gate_run(text)
+    assert shown == ""

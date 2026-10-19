@@ -29,3 +29,28 @@ def test_thread_crud_and_messages(tmp_path):
     with pytest.raises(KeyError):
         ts.add_message(a["id"], "user", "x")
     ts.close()
+
+
+def test_threads_scoped_by_owner(tmp_path):
+    ts = ThreadStore(str(tmp_path / "t.db"))
+    mine = ts.create(owner="alice")
+    ts.create(owner="bob")
+    assert [t["id"] for t in ts.list(owner="alice")] == [mine["id"]]
+    assert len(ts.list()) == 2  # no owner = unscoped (chat mode)
+    assert ts.get(mine["id"], owner="alice")["id"] == mine["id"]
+    with pytest.raises(KeyError):
+        ts.get(mine["id"], owner="bob")
+
+
+def test_old_threads_db_gets_owner_column(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.executescript("CREATE TABLE threads (id TEXT PRIMARY KEY, title TEXT NOT NULL, created_at REAL NOT NULL,"
+                       " updated_at REAL NOT NULL); INSERT INTO threads VALUES ('t1', 'Old', 1, 1);")
+    conn.close()
+    ts = ThreadStore(str(path))
+    assert ts.list(owner="alice") == []  # legacy threads belong to nobody
+    assert [t["id"] for t in ts.list()] == ["t1"]
+    assert ts.create(owner="alice")["id"] in [t["id"] for t in ts.list(owner="alice")]

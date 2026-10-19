@@ -518,6 +518,8 @@ async function sendMessage() {
     for await (const { event, data } of sseEvents(res)) {
       if (event === "citations") renderCitations(botNode, Array.isArray(data) ? data : []);
       else if (event === "token") { answer += (data && data.text) || ""; if (!frame) frame = requestAnimationFrame(paint); }
+      // kb mode: the final check changed what was streamed (e.g. a late refusal) -> show the final text instead
+      else if (event === "reset") { answer = (data && data.text) || ""; if (!frame) frame = requestAnimationFrame(paint); }
       else if (event === "done") {
         if (data && data.refused) markRefused(botNode);
         const t = state.threads.find((x) => x.id === threadId);

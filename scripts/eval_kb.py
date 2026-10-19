@@ -12,8 +12,10 @@ import argparse
 import json
 import re
 import sqlite3
+import statistics
 import sys
 import tempfile
+import time
 from collections import defaultdict
 from dataclasses import replace
 from pathlib import Path
@@ -68,18 +70,25 @@ def main() -> None:
                 # Seed follow-up history through the thread store the app reads from.
                 for m in item.get("history", []):
                     client.app.state.rag_app.threads.add_message(tid, m["role"], m["content"])
+                t0 = time.perf_counter()
                 r = client.post(f"/api/threads/{tid}/chat", json={"message": item["q"]})
+                elapsed = time.perf_counter() - t0
                 if r.status_code != 200:
                     results.append({**item, "status": r.status_code, "answer": r.text, "refused": "http"})
                     continue
                 ev = sse_events(r.text)
-                answer = "".join(d["text"] for e, d in ev if e == "token")
+                answer = ""
+                for e, d in ev:  # "reset" replaces everything streamed so far with the final text
+                    answer = d["text"] if e == "reset" else answer + d["text"] if e == "token" else answer
                 done = next((d for e, d in ev if e == "done"), {}) or {}
                 cites = next((d for e, d in ev if e == "citations"), []) or []
                 log = [json.loads(line) for line in settings.kb_log_path.read_text("utf-8").splitlines()]
                 hits = log[-1].get("hits", []) if log else []
                 results.append({**item, "answer": answer, "refused": done.get("refused"), "cites": cites,
-                                "hits": hits, "plan": log[-1].get("plan") if log else None})
+                                "hits": hits, "plan": log[-1].get("plan") if log else None,
+                                # TestClient buffers the whole stream; the server logs when the first token left.
+                                "_total": elapsed, "_ttft": (log[-1].get("timing") or {}).get("first_token_s", elapsed)
+                                if log else elapsed})
 
     score = defaultdict(lambda: [0, 0])
     for res in results:
@@ -93,7 +102,7 @@ def main() -> None:
         score[f"{t}: correct refuse/answer"][1] += 1
         if should_answer:
             doc, pages = res.get("expect_doc", ""), set(res.get("expect_pages", []))
-            hit = any(doc in h.get("file", "") and (not pages or h.get("page") in pages) for h in res["hits"])
+            hit = any(doc in h.get("file", "") and (not pages or h.get("page") in pages) for h in res.get("hits", []))
             score["retrieval hit@K"][0] += hit
             score["retrieval hit@K"][1] += 1
             correct = (not refused) and bool(re.search(res["_expected"], res["answer"], re.I))
@@ -113,11 +122,15 @@ def main() -> None:
     for res in results:
         if args.show or not res["_ok"]:
             mark = "OK  " if res["_ok"] else "FAIL"
-            top = ", ".join(f"{Path(h['file']).name[:18]}:p{h.get('page')}:{h['score']:.2f}" for h in res["hits"][:4])
+            top = ", ".join(f"{Path(h['file']).name[:18]}:p{h.get('page')}:{h['score']:.2f}" for h in res.get("hits", [])[:4])
             print(f"[{mark}] {res['id']:<18} refused={res['refused']!s:<10} hit={res.get('_hit', '-')!s:<5} | {res['q']}")
-            print(f"        hits: {top or '-'}")
+            print(f"        hits: {top or '-'}" + (f"  HTTP {res['status']}" if "status" in res else ""))
             print(f"        answer: {' '.join(res['answer'].split())[:900]}\n")
 
+    answered = [r for r in results if "_total" in r and not r["refused"]]
+    if answered:
+        print(f"latency over {len(answered)} answered items: median total {statistics.median(r['_total'] for r in answered):.1f}s, "
+              f"median first token {statistics.median(r['_ttft'] for r in answered):.1f}s")
     print("summary:")
     for k, (a, n) in score.items():
         print(f"  {k:<36} {a}/{n}" if n else f"  {k:<36} {a}")

@@ -29,12 +29,15 @@ class Settings:
     refusal_contact: str = "Study and Career Service (studienberatung@oth-aw.de, +49 961 382-1133) · Prof. Dr. Julia Heigl, DTM (j.heigl@oth-aw.de)"
     chat_temperature: float = 0.1
     admin_token: str | None = None
-    rate_limit_per_min: int = 0  # 0 = off (local); set e.g. 20 when hosted
+    rate_limit_per_min: int = 0  # questions per visitor (client cookie) per minute; 0 = off (local)
+    rate_limit_ip_per_min: int = 0  # per client IP, catches visitors that drop the cookie; 0 = off
     kb_chunk_size: int = 1000
     kb_overlap: int = 150
     kb_top_k: int = 8
     # gpt-4.1-mini invented ECTS numbers in the DTM eval; gpt-4.1 answered or refused correctly.
     kb_chat_model: str = "gpt-4.1"
+    # The planner only rewrites the question into search queries; a small model is fast enough there.
+    kb_plan_model: str = "gpt-4.1-mini"
     kb_threshold: float = 0.2
 
     @property
@@ -139,9 +142,11 @@ def get_settings() -> Settings:
         chat_temperature=float(os.getenv("CHAT_TEMPERATURE", "0.1")),
         admin_token=os.getenv("ADMIN_TOKEN") or None,
         rate_limit_per_min=int(os.getenv("RATE_LIMIT_PER_MIN", "0")),
+        rate_limit_ip_per_min=int(os.getenv("RATE_LIMIT_IP_PER_MIN", "0")),
         kb_chunk_size=int(os.getenv("KB_CHUNK_SIZE", "1000")),
         kb_overlap=int(os.getenv("KB_OVERLAP", "150")),
         kb_top_k=int(os.getenv("KB_TOP_K", "8")),
         kb_chat_model=os.getenv("KB_CHAT_MODEL", "gpt-4.1"),
+        kb_plan_model=os.getenv("KB_PLAN_MODEL", "gpt-4.1-mini"),
         kb_threshold=float(os.getenv("KB_THRESHOLD", "0.2")),
     )

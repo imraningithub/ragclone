@@ -12,6 +12,7 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS threads (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
+    owner TEXT,
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL
 );
@@ -41,6 +42,11 @@ class ThreadStore:
         with self._lock:
             self._conn.execute("PRAGMA foreign_keys = ON")
             self._conn.executescript(_SCHEMA)
+            # Databases from before per-visitor threads: add the column; their threads keep owner NULL.
+            cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(threads)")}
+            if "owner" not in cols:
+                self._conn.execute("ALTER TABLE threads ADD COLUMN owner TEXT")
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_threads_owner ON threads(owner, updated_at)")
             self._conn.commit()
 
     # -- helpers -----------------------------------------------------------
@@ -58,32 +64,38 @@ class ThreadStore:
         return {"id": row["id"], "role": row["role"], "content": row["content"],
                 "citations": citations, "created_at": row["created_at"]}
 
-    def _get_thread_row(self, thread_id: str) -> sqlite3.Row:
+    def _get_thread_row(self, thread_id: str, owner: str | None = None) -> sqlite3.Row:
         row = self._conn.execute("SELECT * FROM threads WHERE id = ?", (thread_id,)).fetchone()
-        if row is None:
+        # Someone else's thread looks exactly like a missing one.
+        if row is None or (owner is not None and row["owner"] != owner):
             raise KeyError(f"thread not found: {thread_id}")
         return row
 
     # -- API ---------------------------------------------------------------
-    def create(self, title: str = "New chat") -> dict:
+    # `owner` (an anonymous visitor id) scopes threads to one browser in hosted KB mode; None = no scoping.
+    def create(self, title: str = "New chat", owner: str | None = None) -> dict:
         tid = uuid.uuid4().hex
         now = _now()
         title = (title or "").strip() or "New chat"
         with self._lock:
-            self._conn.execute("INSERT INTO threads (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
-                               (tid, title, now, now))
+            self._conn.execute("INSERT INTO threads (id, title, owner, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                               (tid, title, owner, now, now))
             self._conn.commit()
         return {"id": tid, "title": title, "created_at": now, "updated_at": now}
 
-    def list(self) -> list[dict]:
+    def list(self, owner: str | None = None) -> list[dict]:
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT * FROM threads ORDER BY updated_at DESC, created_at DESC").fetchall()
+            if owner is None:
+                rows = self._conn.execute(
+                    "SELECT * FROM threads ORDER BY updated_at DESC, created_at DESC").fetchall()
+            else:
+                rows = self._conn.execute("SELECT * FROM threads WHERE owner = ? ORDER BY updated_at DESC, "
+                                          "created_at DESC", (owner,)).fetchall()
         return [self._thread(r) for r in rows]
 
-    def get(self, thread_id: str) -> dict:
+    def get(self, thread_id: str, owner: str | None = None) -> dict:
         with self._lock:
-            t = self._thread(self._get_thread_row(thread_id))
+            t = self._thread(self._get_thread_row(thread_id, owner))
             rows = self._conn.execute(
                 "SELECT * FROM messages WHERE thread_id = ? ORDER BY seq", (thread_id,)).fetchall()
         t["messages"] = [self._message(r) for r in rows]

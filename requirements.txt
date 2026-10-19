@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+python-multipart
+python-dotenv
+openai
+sqlite-vec
+numpy
+pypdf
+python-docx
+pandas
+openpyxl
+pytest
+httpx
+fpdf2  # only for scripts/make_samples.py

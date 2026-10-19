@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RAG Chat</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar" id="sidebar" aria-label="Threads">
+      <div class="sidebar-top">
+        <button class="btn primary new-chat" id="newChat" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          <span>New chat</span>
+        </button>
+      </div>
+      <nav class="thread-list-wrap" aria-label="Chat threads">
+        <ul class="thread-list" id="threadList"></ul>
+        <p class="muted small thread-empty" id="threadEmpty" hidden>No chats yet.</p>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="status small muted" id="status" aria-live="polite">Connecting…</div>
+        <button class="icon-btn" id="openSettings" type="button" aria-label="Settings" title="Settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+        </button>
+      </div>
+    </aside>
+    <div class="scrim" id="scrim" hidden></div>
+
+    <main class="main" id="main">
+      <header class="topbar">
+        <button class="icon-btn hamburger" id="toggleSidebar" type="button" aria-label="Toggle sidebar" aria-controls="sidebar" aria-expanded="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+        </button>
+        <h1 class="thread-title" id="threadTitle">New chat</h1>
+      </header>
+
+      <section class="messages" id="messages" aria-live="polite" aria-label="Messages">
+        <div class="empty-state" id="emptyState">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>
+          <p>Attach documents and ask questions about them</p>
+        </div>
+      </section>
+
+      <div class="drop-overlay" id="dropOverlay" hidden><div>Drop files to attach</div></div>
+
+      <footer class="composer-wrap">
+        <div class="attachments" id="attachments" aria-label="Attached files"></div>
+        <form class="composer" id="composer">
+          <input type="file" id="fileInput" multiple hidden accept=".pdf,.docx,.txt,.md,.csv,.xlsx,.json,.html">
+          <button class="icon-btn" id="attachBtn" type="button" aria-label="Attach files" title="Attach files">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.4 11.1l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg>
+          </button>
+          <label for="input" class="visually-hidden">Message</label>
+          <textarea id="input" rows="1" placeholder="Ask about your documents…"></textarea>
+          <button class="icon-btn send" id="sendBtn" type="submit" aria-label="Send message" title="Send">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></svg>
+          </button>
+          <button class="icon-btn stop" id="stopBtn" type="button" aria-label="Stop generating" title="Stop" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+          </button>
+        </form>
+      </footer>
+    </main>
+  </div>
+
+  <dialog class="modal" id="settingsDialog" aria-labelledby="settingsTitle">
+    <form id="settingsForm" method="dialog" novalidate>
+      <h2 id="settingsTitle">Attachments &amp; retrieval</h2>
+      <label class="row check"><input type="checkbox" name="enabled"> Enable attachments</label>
+      <label class="row">Parse mode
+        <select name="parse_mode">
+          <option value="auto">Auto</option>
+          <option value="inline">Include in chat</option>
+          <option value="embeddings">Ingest as embeddings</option>
+          <option value="prompt">Ask every time</option>
+        </select>
+      </label>
+      <label class="row">Auto-inline context ratio <input type="number" name="auto_inline_context_ratio" min="0.05" max="1" step="0.05"></label>
+      <label class="row">Max file size (MB) <input type="number" name="max_file_size_mb" min="1" max="200" step="1"></label>
+      <label class="row">Top-K <input type="number" name="retrieval_limit" min="1" max="20" step="1"></label>
+      <label class="row">Similarity threshold <input type="number" name="retrieval_threshold" min="0" max="1" step="0.05"></label>
+      <label class="row">Chunk size (chars) <input type="number" name="chunk_size_chars" min="64" step="1"></label>
+      <label class="row">Chunk overlap (chars) <input type="number" name="overlap_chars" min="0" step="1"></label>
+      <label class="row">Vector search mode
+        <select name="search_mode">
+          <option value="auto">auto</option>
+          <option value="ann">ann</option>
+          <option value="linear">linear</option>
+        </select>
+      </label>
+      <p class="form-error" id="settingsError" role="alert" hidden></p>
+      <div class="actions">
+        <button class="btn" type="button" id="settingsCancel">Cancel</button>
+        <button class="btn primary" type="submit" id="settingsSave">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="modal small-modal" id="parseDialog" aria-labelledby="parseTitle">
+    <form method="dialog">
+      <h2 id="parseTitle">How should this file be used?</h2>
+      <p class="muted" id="parseFile"></p>
+      <div class="actions column">
+        <button class="btn primary" value="inline">Include in chat</button>
+        <button class="btn" value="embeddings">Ingest as embeddings</button>
+        <button class="btn ghost" value="cancel">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toasts" id="toasts" role="status" aria-live="assertive"></div>
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>

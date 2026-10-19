@@ -1,0 +1,857 @@
+{
+  "fidelity": [
+    1.0,
+    0.9999908804893494,
+    0.9999914765357971
+  ],
+  "jan_chunk_counts": {
+    "employee_handbook.pdf": 9,
+    "r7_product_spec.docx": 3,
+    "sales_and_prices.xlsx": 2
+  },
+  "clone_chunk_counts": {
+    "employee_handbook.pdf": 10,
+    "r7_product_spec.docx": 3,
+    "sales_and_prices.xlsx": 3
+  },
+  "questions": [
+    {
+      "question": "How many vacation days do full-time staff get, and until when can unused days be carried over?",
+      "jan_top3_unfiltered": [
+        {
+          "file": "employee_handbook.pdf",
+          "chunk": 1,
+          "score": 0.6905568838119507
+        },
+        {
+          "file": "employee_handbook.pdf",
+          "chunk": 6,
+          "score": 0.4509178102016449
+        },
+        {
+          "file": "employee_handbook.pdf",
+          "chunk": 3,
+          "score": 0.4333654046058655
+        }
+      ],
+      "variants": {
+        "jan": {
+          "answer_in_context": true,
+          "hits": [
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 1,
+              "score": 0.6905568838119507,
+              "text": "mmitments are met. Overtime must be approved in advance by the line manager\n\nand is compensated with time off in lieu at a rate of 1:1.\n\n2. Vacation and leave\n\nFull-time employees receive 27 days of paid vacation per calendar year. Part-time employees receive a\n\npro-rated amount. Unused vacation days can be carried over until March 31 of the following year, after which\n\nthey expire. Vacation requests longer than five consecutive days must be submitted at least four weeks in\n\nadvance through the HR portal. P"
+            },
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 6,
+              "score": 0.4509178102016449,
+              "text": "g days. The budget can\n\nbe used for courses, conferences, certifications and books. Requests above 500 EUR need approval from\n\nthe department head. Unused learning budget does not carry over into the next year.\n\n8. Performance reviews and salary\n\nPerformance reviews take place twice a year, in April and October. Salary adjustments are decided once a\n\nyear in the October cycle and take effect on January 1. Employees receive a 13th month salary paid with the\n\nNovember payroll. The annual bonus depends on comp"
+            },
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 3,
+              "score": 0.4333654046058655,
+              "text": "e sick days are credited back when you submit a certificate.\n\n4. Remote work\n\nEmployees may work remotely up to three days per week after completing their probation period. Fridays are\n\ncore office days for the Berlin team. Working from abroad is allowed for up to 20 working days per year and\n\nmust be registered with HR at least two weeks before travel because of tax and social security rules. A\n\nmonthly home office allowance of 40 EUR is paid with the salary.\n\n5. Equipment and IT security\n\nEvery new hire r"
+            }
+          ]
+        },
+        "clone_minilm_k3_t0.3": {
+          "answer_in_context": true,
+          "hits": [
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 1,
+              "score": 0.7347531115234067,
+              "text": "organise their time\nfreely as long as team commitments are met. Overtime must be approved in advance by the line manager\nand is compensated with time off in lieu at a rate of 1:1.\n2. Vacation and leave\nFull-time employees receive 27 days of paid vacation per calendar year. Part-time employees receive a\npro-rated amount. Unused vacation days can be carried over until March 31 of the following year, after which\nthey expire."
+            },
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 2,
+              "score": 0.5225508643024975,
+              "text": "until March 31 of the following year, after which\nthey expire. Vacation requests longer than five consecutive days must be submitted at least four weeks in\nadvance through the HR portal. Parental leave follows the statutory rules; Acme additionally pays a top-up of\n10% of the gross salary during the first three months.\n3. Sick leave\nIf you are sick, inform your manager before 9:00 on the first day of absence. A doctor's certificate is required\nfrom the third day of illness onward."
+            },
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 3,
+              "score": 0.48496268221505523,
+              "text": "s certificate is required\nfrom the third day of illness onward. Sick days do not count against vacation. If you fall ill during your\nvacation, the sick days are credited back when you submit a certificate.\n4. Remote work\nEmployees may work remotely up to three days per week after completing their probation period. Fridays are\ncore office days for the Berlin team. Working from abroad is allowed for up to 20 working days per year and"
+            }
+          ]
+        },
+        "clone_openai_k3_t0.3": {
+          "answer_in_context": true,
+          "hits": [
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 1,
+              "score": 0.5935794115066528,
+              "text": "organise their time\nfreely as long as team commitments are met. Overtime must be approved in advance by the line manager\nand is compensated with time off in lieu at a rate of 1:1.\n2. Vacation and leave\nFull-time employees receive 27 days of paid vacation per calendar year. Part-time employees receive a\npro-rated amount. Unused vacation days can be carried over until March 31 of the following year, after which\nthey expire."
+            },
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 2,
+              "score": 0.4966554045677185,
+              "text": "until March 31 of the following year, after which\nthey expire. Vacation requests longer than five consecutive days must be submitted at least four weeks in\nadvance through the HR portal. Parental leave follows the statutory rules; Acme additionally pays a top-up of\n10% of the gross salary during the first three months.\n3. Sick leave\nIf you are sick, inform your manager before 9:00 on the first day of absence. A doctor's certificate is required\nfrom the third day of illness onward."
+            },
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 3,
+              "score": 0.47590571641921997,
+              "text": "s certificate is required\nfrom the third day of illness onward. Sick days do not count against vacation. If you fall ill during your\nvacation, the sick days are credited back when you submit a certificate.\n4. Remote work\nEmployees may work remotely up to three days per week after completing their probation period. Fridays are\ncore office days for the Berlin team. Working from abroad is allowed for up to 20 working days per year and"
+            }
+          ]
+        },
+        "clone_openai_k5_t0.2": {
+          "answer_in_context": true,
+          "hits": [
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 1,
+              "score": 0.5935794115066528,
+              "text": "organise their time\nfreely as long as team commitments are met. Overtime must be approved in advance by the line manager\nand is compensated with time off in lieu at a rate of 1:1.\n2. Vacation and leave\nFull-time employees receive 27 days of paid vacation per calendar year. Part-time employees receive a\npro-rated amount. Unused vacation days can be carried over until March 31 of the following year, after which\nthey expire."
+            },
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 2,
+              "score": 0.4966554045677185,
+              "text": "until March 31 of the following year, after which\nthey expire. Vacation requests longer than five consecutive days must be submitted at least four weeks in\nadvance through the HR portal. Parental leave follows the statutory rules; Acme additionally pays a top-up of\n10% of the gross salary during the first three months.\n3. Sick leave\nIf you are sick, inform your manager before 9:00 on the first day of absence. A doctor's certificate is required\nfrom the third day of illness onward."
+            },
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 3,
+              "score": 0.47590571641921997,
+              "text": "s certificate is required\nfrom the third day of illness onward. Sick days do not count against vacation. If you fall ill during your\nvacation, the sick days are credited back when you submit a certificate.\n4. Remote work\nEmployees may work remotely up to three days per week after completing their probation period. Fridays are\ncore office days for the Berlin team. Working from abroad is allowed for up to 20 working days per year and"
+            },
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 4,
+              "score": 0.3905212879180908,
+              "text": "ng from abroad is allowed for up to 20 working days per year and\nmust be registered with HR at least two weeks before travel because of tax and social security rules. A\nmonthly home office allowance of 40 EUR is paid with the salary.\n5. Equipment and IT security\nEvery new hire receives a laptop and a headset within their first week. Lost or stolen equipment must be\nreported to IT within 24 hours via the service desk. Company laptops must use full disk encryption and the\npassword manager provided by IT."
+            },
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 6,
+              "score": 0.35514217615127563,
+              "text": "up to 150 EUR per\nnight in major cities and 110 EUR elsewhere. Expense reports must be submitted within 30 days of the trip,\ntogether with all original receipts.\n7. Learning and development\nEach employee has an annual learning budget of 1,500 EUR and three paid learning days. The budget can\nbe used for courses, conferences, certifications and books. Requests above 500 EUR need approval from\nthe department head. Unused learning budget does not carry over into the next year."
+            }
+          ]
+        }
+      },
+      "clone_answers": {
+        "jan_defaults": "Full-time employees receive 27 days of paid vacation per calendar year. Unused vacation days can be carried over until March 31 of the following year, after which they expire. This information is from the employee handbook.",
+        "clone_tuned": "Full-time employees receive 27 days of paid vacation per calendar year. Unused vacation days can be carried over until March 31 of the following year, after which they expire [1]."
+      }
+    },
+    {
+      "question": "Can I work from home on Fridays?",
+      "jan_top3_unfiltered": [
+        {
+          "file": "employee_handbook.pdf",
+          "chunk": 3,
+          "score": 0.43755999207496643
+        },
+        {
+          "file": "employee_handbook.pdf",
+          "chunk": 1,
+          "score": 0.3234528601169586
+        },
+        {
+          "file": "employee_handbook.pdf",
+          "chunk": 0,
+          "score": 0.2978258430957794
+        }
+      ],
+      "variants": {
+        "jan": {
+          "answer_in_context": true,
+          "hits": [
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 3,
+              "score": 0.43755999207496643,
+              "text": "e sick days are credited back when you submit a certificate.\n\n4. Remote work\n\nEmployees may work remotely up to three days per week after completing their probation period. Fridays are\n\ncore office days for the Berlin team. Working from abroad is allowed for up to 20 working days per year and\n\nmust be registered with HR at least two weeks before travel because of tax and social security rules. A\n\nmonthly home office allowance of 40 EUR is paid with the salary.\n\n5. Equipment and IT security\n\nEvery new hire r"
+            },
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 1,
+              "score": 0.3234528601169586,
+              "text": "mmitments are met. Overtime must be approved in advance by the line manager\n\nand is compensated with time off in lieu at a rate of 1:1.\n\n2. Vacation and leave\n\nFull-time employees receive 27 days of paid vacation per calendar year. Part-time employees receive a\n\npro-rated amount. Unused vacation days can be carried over until March 31 of the following year, after which\n\nthey expire. Vacation requests longer than five consecutive days must be submitted at least four weeks in\n\nadvance through the HR portal. P"
+            }
+          ]
+        },
+        "clone_minilm_k3_t0.3": {
+          "answer_in_context": true,
+          "hits": [
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 3,
+              "score": 0.4347826574192654,
+              "text": "s certificate is required\nfrom the third day of illness onward. Sick days do not count against vacation. If you fall ill during your\nvacation, the sick days are credited back when you submit a certificate.\n4. Remote work\nEmployees may work remotely up to three days per week after completing their probation period. Fridays are\ncore office days for the Berlin team. Working from abroad is allowed for up to 20 working days per year and"
+            },
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 1,
+              "score": 0.365447491529125,
+              "text": "organise their time\nfreely as long as team commitments are met. Overtime must be approved in advance by the line manager\nand is compensated with time off in lieu at a rate of 1:1.\n2. Vacation and leave\nFull-time employees receive 27 days of paid vacation per calendar year. Part-time employees receive a\npro-rated amount. Unused vacation days can be carried over until March 31 of the following year, after which\nthey expire."
+            },
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 4,
+              "score": 0.3433855286716675,
+              "text": "ng from abroad is allowed for up to 20 working days per year and\nmust be registered with HR at least two weeks before travel because of tax and social security rules. A\nmonthly home office allowance of 40 EUR is paid with the salary.\n5. Equipment and IT security\nEvery new hire receives a laptop and a headset within their first week. Lost or stolen equipment must be\nreported to IT within 24 hours via the service desk. Company laptops must use full disk encryption and the\npassword manager provided by IT."
+            }
+          ]
+        },
+        "clone_openai_k3_t0.3": {
+          "answer_in_context": true,
+          "hits": [
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 3,
+              "score": 0.41816675662994385,
+              "text": "s certificate is required\nfrom the third day of illness onward. Sick days do not count against vacation. If you fall ill during your\nvacation, the sick days are credited back when you submit a certificate.\n4. Remote work\nEmployees may work remotely up to three days per week after completing their probation period. Fridays are\ncore office days for the Berlin team. Working from abroad is allowed for up to 20 working days per year and"
+            },
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 4,
+              "score": 0.3852681517601013,
+              "text": "ng from abroad is allowed for up to 20 working days per year and\nmust be registered with HR at least two weeks before travel because of tax and social security rules. A\nmonthly home office allowance of 40 EUR is paid with the salary.\n5. Equipment and IT security\nEvery new hire receives a laptop and a headset within their first week. Lost or stolen equipment must be\nreported to IT within 24 hours via the service desk. Company laptops must use full disk encryption and the\npassword manager provided by IT."
+            },
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 1,
+              "score": 0.3285408616065979,
+              "text": "organise their time\nfreely as long as team commitments are met. Overtime must be approved in advance by the line manager\nand is compensated with time off in lieu at a rate of 1:1.\n2. Vacation and leave\nFull-time employees receive 27 days of paid vacation per calendar year. Part-time employees receive a\npro-rated amount. Unused vacation days can be carried over until March 31 of the following year, after which\nthey expire."
+            }
+          ]
+        },
+        "clone_openai_k5_t0.2": {
+          "answer_in_context": true,
+          "hits": [
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 3,
+              "score": 0.41816675662994385,
+              "text": "s certificate is required\nfrom the third day of illness onward. Sick days do not count against vacation. If you fall ill during your\nvacation, the sick days are credited back when you submit a certificate.\n4. Remote work\nEmployees may work remotely up to three days per week after completing their probation period. Fridays are\ncore office days for the Berlin team. Working from abroad is allowed for up to 20 working days per year and"
+            },
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 4,
+              "score": 0.3852681517601013,
+              "text": "ng from abroad is allowed for up to 20 working days per year and\nmust be registered with HR at least two weeks before travel because of tax and social security rules. A\nmonthly home office allowance of 40 EUR is paid with the salary.\n5. Equipment and IT security\nEvery new hire receives a laptop and a headset within their first week. Lost or stolen equipment must be\nreported to IT within 24 hours via the service desk. Company laptops must use full disk encryption and the\npassword manager provided by IT."
+            },
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 1,
+              "score": 0.3285408616065979,
+              "text": "organise their time\nfreely as long as team commitments are met. Overtime must be approved in advance by the line manager\nand is compensated with time off in lieu at a rate of 1:1.\n2. Vacation and leave\nFull-time employees receive 27 days of paid vacation per calendar year. Part-time employees receive a\npro-rated amount. Unused vacation days can be carried over until March 31 of the following year, after which\nthey expire."
+            },
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 0,
+              "score": 0.31938105821609497,
+              "text": "Acme Robotics GmbH - Employee Handbook 2026\nThis handbook summarises the main policies for employees in Germany. In case of conflict, the employment contract\nand statutory law take precedence.\n1. Working hours\nStandard working hours at Acme Robotics are 40 hours per week. Core hours are 10:00 to 15:00, during\nwhich all employees are expected to be reachable. Outside core hours, employees may organise their time\nfreely as long as team commitments are met."
+            },
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 2,
+              "score": 0.3103613257408142,
+              "text": "until March 31 of the following year, after which\nthey expire. Vacation requests longer than five consecutive days must be submitted at least four weeks in\nadvance through the HR portal. Parental leave follows the statutory rules; Acme additionally pays a top-up of\n10% of the gross salary during the first three months.\n3. Sick leave\nIf you are sick, inform your manager before 9:00 on the first day of absence. A doctor's certificate is required\nfrom the third day of illness onward."
+            }
+          ]
+        }
+      },
+      "clone_answers": {
+        "jan_defaults": "No, Fridays are core office days for the Berlin team, so you cannot work from home on Fridays. Employees may work remotely up to three days per week after completing their probation period, but Fridays must be in the office [1].",
+        "clone_tuned": "No, you cannot work from home on Fridays. According to the employee handbook, Fridays are core office days for the Berlin team, meaning employees are expected to be present in the office on Fridays [1]."
+      }
+    },
+    {
+      "question": "How much is the hotel limit in big cities?",
+      "jan_top3_unfiltered": [
+        {
+          "file": "employee_handbook.pdf",
+          "chunk": 5,
+          "score": 0.413112998008728
+        },
+        {
+          "file": "employee_handbook.pdf",
+          "chunk": 4,
+          "score": 0.2714885473251343
+        },
+        {
+          "file": "employee_handbook.pdf",
+          "chunk": 1,
+          "score": 0.2133112996816635
+        }
+      ],
+      "variants": {
+        "jan": {
+          "answer_in_context": true,
+          "hits": [
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 5,
+              "score": 0.413112998008728,
+              "text": " be booked through the travel portal. Train travel is preferred for distances under 600\n\nkm. The daily meal allowance for domestic trips is 28 EUR. Hotel costs are reimbursed up to 150 EUR per\n\nnight in major cities and 110 EUR elsewhere. Expense reports must be submitted within 30 days of the trip,\n\ntogether with all original receipts.\n\n7. Learning and development\n\nEach employee has an annual learning budget of 1,500 EUR and three paid learning days. The budget can\n\nbe used for courses, conferences, certif"
+            }
+          ]
+        },
+        "clone_minilm_k3_t0.3": {
+          "answer_in_context": true,
+          "hits": [
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 5,
+              "score": 0.4973663478043778,
+              "text": "e full disk encryption and the\npassword manager provided by IT. Passwords must be at least 14 characters long. Private USB drives may\nnot be connected to company devices.\n6. Travel and expenses\nBusiness travel must be booked through the travel portal. Train travel is preferred for distances under 600\nkm. The daily meal allowance for domestic trips is 28 EUR. Hotel costs are reimbursed up to 150 EUR per\nnight in major cities and 110 EUR elsewhere."
+            }
+          ]
+        },
+        "clone_openai_k3_t0.3": {
+          "answer_in_context": true,
+          "hits": [
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 6,
+              "score": 0.307730495929718,
+              "text": "up to 150 EUR per\nnight in major cities and 110 EUR elsewhere. Expense reports must be submitted within 30 days of the trip,\ntogether with all original receipts.\n7. Learning and development\nEach employee has an annual learning budget of 1,500 EUR and three paid learning days. The budget can\nbe used for courses, conferences, certifications and books. Requests above 500 EUR need approval from\nthe department head. Unused learning budget does not carry over into the next year."
+            }
+          ]
+        },
+        "clone_openai_k5_t0.2": {
+          "answer_in_context": true,
+          "hits": [
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 6,
+              "score": 0.307730495929718,
+              "text": "up to 150 EUR per\nnight in major cities and 110 EUR elsewhere. Expense reports must be submitted within 30 days of the trip,\ntogether with all original receipts.\n7. Learning and development\nEach employee has an annual learning budget of 1,500 EUR and three paid learning days. The budget can\nbe used for courses, conferences, certifications and books. Requests above 500 EUR need approval from\nthe department head. Unused learning budget does not carry over into the next year."
+            },
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 5,
+              "score": 0.29951030015945435,
+              "text": "e full disk encryption and the\npassword manager provided by IT. Passwords must be at least 14 characters long. Private USB drives may\nnot be connected to company devices.\n6. Travel and expenses\nBusiness travel must be booked through the travel portal. Train travel is preferred for distances under 600\nkm. The daily meal allowance for domestic trips is 28 EUR. Hotel costs are reimbursed up to 150 EUR per\nnight in major cities and 110 EUR elsewhere."
+            },
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 4,
+              "score": 0.21021807193756104,
+              "text": "ng from abroad is allowed for up to 20 working days per year and\nmust be registered with HR at least two weeks before travel because of tax and social security rules. A\nmonthly home office allowance of 40 EUR is paid with the salary.\n5. Equipment and IT security\nEvery new hire receives a laptop and a headset within their first week. Lost or stolen equipment must be\nreported to IT within 24 hours via the service desk. Company laptops must use full disk encryption and the\npassword manager provided by IT."
+            }
+          ]
+        }
+      },
+      "clone_answers": {
+        "jan_defaults": "The hotel limit in major cities is up to 150 EUR per night. This is stated in the travel policy section of the employee handbook [1].",
+        "clone_tuned": "The hotel cost reimbursement limit in major cities is up to 150 EUR per night [2]."
+      }
+    },
+    {
+      "question": "What is the minimum password length?",
+      "jan_top3_unfiltered": [
+        {
+          "file": "employee_handbook.pdf",
+          "chunk": 4,
+          "score": 0.3627469837665558
+        },
+        {
+          "file": "r7_product_spec.docx",
+          "chunk": 1,
+          "score": 0.20008836686611176
+        },
+        {
+          "file": "employee_handbook.pdf",
+          "chunk": 1,
+          "score": 0.17560021579265594
+        }
+      ],
+      "variants": {
+        "jan": {
+          "answer_in_context": true,
+          "hits": [
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 4,
+              "score": 0.3627469837665558,
+              "text": "with the salary.\n\n5. Equipment and IT security\n\nEvery new hire receives a laptop and a headset within their first week. Lost or stolen equipment must be\n\nreported to IT within 24 hours via the service desk. Company laptops must use full disk encryption and the\n\npassword manager provided by IT. Passwords must be at least 14 characters long. Private USB drives may\n\nnot be connected to company devices.\n\n6. Travel and expenses\n\nBusiness travel must be booked through the travel portal. Train travel is preferred "
+            }
+          ]
+        },
+        "clone_minilm_k3_t0.3": {
+          "answer_in_context": true,
+          "hits": [
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 5,
+              "score": 0.44410097534652104,
+              "text": "e full disk encryption and the\npassword manager provided by IT. Passwords must be at least 14 characters long. Private USB drives may\nnot be connected to company devices.\n6. Travel and expenses\nBusiness travel must be booked through the travel portal. Train travel is preferred for distances under 600\nkm. The daily meal allowance for domestic trips is 28 EUR. Hotel costs are reimbursed up to 150 EUR per\nnight in major cities and 110 EUR elsewhere."
+            }
+          ]
+        },
+        "clone_openai_k3_t0.3": {
+          "answer_in_context": true,
+          "hits": [
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 5,
+              "score": 0.388502299785614,
+              "text": "e full disk encryption and the\npassword manager provided by IT. Passwords must be at least 14 characters long. Private USB drives may\nnot be connected to company devices.\n6. Travel and expenses\nBusiness travel must be booked through the travel portal. Train travel is preferred for distances under 600\nkm. The daily meal allowance for domestic trips is 28 EUR. Hotel costs are reimbursed up to 150 EUR per\nnight in major cities and 110 EUR elsewhere."
+            }
+          ]
+        },
+        "clone_openai_k5_t0.2": {
+          "answer_in_context": true,
+          "hits": [
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 5,
+              "score": 0.388502299785614,
+              "text": "e full disk encryption and the\npassword manager provided by IT. Passwords must be at least 14 characters long. Private USB drives may\nnot be connected to company devices.\n6. Travel and expenses\nBusiness travel must be booked through the travel portal. Train travel is preferred for distances under 600\nkm. The daily meal allowance for domestic trips is 28 EUR. Hotel costs are reimbursed up to 150 EUR per\nnight in major cities and 110 EUR elsewhere."
+            },
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 4,
+              "score": 0.22819942235946655,
+              "text": "ng from abroad is allowed for up to 20 working days per year and\nmust be registered with HR at least two weeks before travel because of tax and social security rules. A\nmonthly home office allowance of 40 EUR is paid with the salary.\n5. Equipment and IT security\nEvery new hire receives a laptop and a headset within their first week. Lost or stolen equipment must be\nreported to IT within 24 hours via the service desk. Company laptops must use full disk encryption and the\npassword manager provided by IT."
+            }
+          ]
+        }
+      },
+      "clone_answers": {
+        "jan_defaults": "The minimum password length is 14 characters [1].",
+        "clone_tuned": "The minimum password length is 14 characters long [1]."
+      }
+    },
+    {
+      "question": "How long does a full charge of the R7 take?",
+      "jan_top3_unfiltered": [
+        {
+          "file": "r7_product_spec.docx",
+          "chunk": 2,
+          "score": 0.5213980674743652
+        },
+        {
+          "file": "r7_product_spec.docx",
+          "chunk": 0,
+          "score": 0.5022772550582886
+        },
+        {
+          "file": "r7_product_spec.docx",
+          "chunk": 1,
+          "score": 0.37363556027412415
+        }
+      ],
+      "variants": {
+        "jan": {
+          "answer_in_context": true,
+          "hits": [
+            {
+              "file": "r7_product_spec.docx",
+              "chunk": 2,
+              "score": 0.5213980674743652,
+              "text": "arranty\nThe R7 comes with a 24-month warranty covering parts and labour. The battery is covered for 3,000 charge cycles or 36 months, whichever comes first. Damage from misuse is excluded.\nTechnical data\nParameter\nValue\nPayload\n600 kg\nMaximum speed\n2.0 m/s\nDimensions (L x W x H)\n1100 x 750 x 320 mm\nWeight\n185 kg\nNavigation\nLiDAR + stereo cameras, no floor markers needed\nIP rating\nIP54\nOperating temperature\n0 to 40 °C"
+            },
+            {
+              "file": "r7_product_spec.docx",
+              "chunk": 0,
+              "score": 0.5022772550582886,
+              "text": "Product specification: Acme R7 warehouse robot\nOverview\nThe R7 is an autonomous mobile robot for warehouse picking. It navigates with LiDAR and stereo cameras and integrates with common warehouse management systems through a REST API.\nBattery and charging\nThe R7 uses a 48 V lithium iron phosphate battery with a capacity of 2.4 kWh. A full charge takes 90 minutes on the docking station; opportunity charging to 80% takes 45 minutes. Typical runtime is 10 hours in mixed operation.\nSafety\nThe robot is certified"
+            },
+            {
+              "file": "r7_product_spec.docx",
+              "chunk": 1,
+              "score": 0.37363556027412415,
+              "text": "me is 10 hours in mixed operation.\nSafety\nThe robot is certified to ISO 3691-4. It stops within 0.3 m at full speed when an obstacle is detected. Emergency stop buttons are located on all four sides. The maximum speed in shared zones with people is limited to 1.0 m/s.\nMaintenance\nWheels and brushes should be inspected every 500 operating hours. The LiDAR window must be cleaned weekly. Firmware updates are delivered over the air every quarter.\nWarranty\nThe R7 comes with a 24-month warranty covering parts and"
+            }
+          ]
+        },
+        "clone_minilm_k3_t0.3": {
+          "answer_in_context": true,
+          "hits": [
+            {
+              "file": "r7_product_spec.docx",
+              "chunk": 0,
+              "score": 0.5111990930664748,
+              "text": "Product specification: Acme R7 warehouse robot\nOverview\nThe R7 is an autonomous mobile robot for warehouse picking. It navigates with LiDAR and stereo cameras and integrates with common warehouse management systems through a REST API.\nBattery and charging\nThe R7 uses a 48 V lithium iron phosphate battery with a capacity of 2.4 kWh. A full charge takes 90 minutes on the docking station; opportunity charging to 80% takes 45 minutes. Typical runtime is 10 hours in mixed operation."
+            },
+            {
+              "file": "r7_product_spec.docx",
+              "chunk": 2,
+              "score": 0.47132779383873746,
+              "text": "kly. Firmware updates are delivered over the air every quarter.\nWarranty\nThe R7 comes with a 24-month warranty covering parts and labour. The battery is covered for 3,000 charge cycles or 36 months, whichever comes first. Damage from misuse is excluded.\nTechnical data\nParameter | Value\nPayload | 600 kg\nMaximum speed | 2.0 m/s\nDimensions (L x W x H) | 1100 x 750 x 320 mm\nWeight | 185 kg\nNavigation | LiDAR + stereo cameras, no floor markers needed\nIP rating | IP54\nOperating temperature | 0 to 40 °C"
+            },
+            {
+              "file": "r7_product_spec.docx",
+              "chunk": 1,
+              "score": 0.3287031017486829,
+              "text": "kes 45 minutes. Typical runtime is 10 hours in mixed operation.\nSafety\nThe robot is certified to ISO 3691-4. It stops within 0.3 m at full speed when an obstacle is detected. Emergency stop buttons are located on all four sides. The maximum speed in shared zones with people is limited to 1.0 m/s.\nMaintenance\nWheels and brushes should be inspected every 500 operating hours. The LiDAR window must be cleaned weekly. Firmware updates are delivered over the air every quarter."
+            }
+          ]
+        },
+        "clone_openai_k3_t0.3": {
+          "answer_in_context": true,
+          "hits": [
+            {
+              "file": "r7_product_spec.docx",
+              "chunk": 0,
+              "score": 0.5063709914684296,
+              "text": "Product specification: Acme R7 warehouse robot\nOverview\nThe R7 is an autonomous mobile robot for warehouse picking. It navigates with LiDAR and stereo cameras and integrates with common warehouse management systems through a REST API.\nBattery and charging\nThe R7 uses a 48 V lithium iron phosphate battery with a capacity of 2.4 kWh. A full charge takes 90 minutes on the docking station; opportunity charging to 80% takes 45 minutes. Typical runtime is 10 hours in mixed operation."
+            },
+            {
+              "file": "r7_product_spec.docx",
+              "chunk": 2,
+              "score": 0.4497641324996948,
+              "text": "kly. Firmware updates are delivered over the air every quarter.\nWarranty\nThe R7 comes with a 24-month warranty covering parts and labour. The battery is covered for 3,000 charge cycles or 36 months, whichever comes first. Damage from misuse is excluded.\nTechnical data\nParameter | Value\nPayload | 600 kg\nMaximum speed | 2.0 m/s\nDimensions (L x W x H) | 1100 x 750 x 320 mm\nWeight | 185 kg\nNavigation | LiDAR + stereo cameras, no floor markers needed\nIP rating | IP54\nOperating temperature | 0 to 40 °C"
+            },
+            {
+              "file": "r7_product_spec.docx",
+              "chunk": 1,
+              "score": 0.3399730324745178,
+              "text": "kes 45 minutes. Typical runtime is 10 hours in mixed operation.\nSafety\nThe robot is certified to ISO 3691-4. It stops within 0.3 m at full speed when an obstacle is detected. Emergency stop buttons are located on all four sides. The maximum speed in shared zones with people is limited to 1.0 m/s.\nMaintenance\nWheels and brushes should be inspected every 500 operating hours. The LiDAR window must be cleaned weekly. Firmware updates are delivered over the air every quarter."
+            }
+          ]
+        },
+        "clone_openai_k5_t0.2": {
+          "answer_in_context": true,
+          "hits": [
+            {
+              "file": "r7_product_spec.docx",
+              "chunk": 0,
+              "score": 0.5063709914684296,
+              "text": "Product specification: Acme R7 warehouse robot\nOverview\nThe R7 is an autonomous mobile robot for warehouse picking. It navigates with LiDAR and stereo cameras and integrates with common warehouse management systems through a REST API.\nBattery and charging\nThe R7 uses a 48 V lithium iron phosphate battery with a capacity of 2.4 kWh. A full charge takes 90 minutes on the docking station; opportunity charging to 80% takes 45 minutes. Typical runtime is 10 hours in mixed operation."
+            },
+            {
+              "file": "r7_product_spec.docx",
+              "chunk": 2,
+              "score": 0.4497641324996948,
+              "text": "kly. Firmware updates are delivered over the air every quarter.\nWarranty\nThe R7 comes with a 24-month warranty covering parts and labour. The battery is covered for 3,000 charge cycles or 36 months, whichever comes first. Damage from misuse is excluded.\nTechnical data\nParameter | Value\nPayload | 600 kg\nMaximum speed | 2.0 m/s\nDimensions (L x W x H) | 1100 x 750 x 320 mm\nWeight | 185 kg\nNavigation | LiDAR + stereo cameras, no floor markers needed\nIP rating | IP54\nOperating temperature | 0 to 40 °C"
+            },
+            {
+              "file": "r7_product_spec.docx",
+              "chunk": 1,
+              "score": 0.3399730324745178,
+              "text": "kes 45 minutes. Typical runtime is 10 hours in mixed operation.\nSafety\nThe robot is certified to ISO 3691-4. It stops within 0.3 m at full speed when an obstacle is detected. Emergency stop buttons are located on all four sides. The maximum speed in shared zones with people is limited to 1.0 m/s.\nMaintenance\nWheels and brushes should be inspected every 500 operating hours. The LiDAR window must be cleaned weekly. Firmware updates are delivered over the air every quarter."
+            },
+            {
+              "file": "sales_and_prices.xlsx",
+              "chunk": 2,
+              "score": 0.3352263569831848,
+              "text": "# Sheet: Price list\nProduct | List price (EUR) | Lead time (weeks)\nR5 compact robot | 38000 | 6\nR7 warehouse robot | 54000 | 8\nDocking station | 4200 | 2\nFleet manager licence (per robot/year) | 1800 | 0\nExtended warranty (+24 months) | 6500 | 0"
+            },
+            {
+              "file": "sales_and_prices.xlsx",
+              "chunk": 0,
+              "score": 0.24274486303329468,
+              "text": "# Sheet: Sales 2025\nRegion | Quarter | Units sold | Revenue (EUR million) | Top product\nNorth | Q1 2025 | 410 | 1.23 | R7\nNorth | Q2 2025 | 455 | 1.37 | R7\nNorth | Q3 2025 | 502 | 1.51 | R7\nNorth | Q4 2025 | 560 | 1.68 | R7\nSouth | Q1 2025 | 300 | 0.9 | R7\nSouth | Q2 2025 | 318 | 0.95 | R7\nSouth | Q3 2025 | 290 | 0.87 | R7\nSouth | Q4 2025 | 344 | 1.03 | R7\nWest | Q1 2025 | 520 | 1.56 | R7\nWest | Q2 2025 | 610 | 1.83 | R7\nWest | Q3 2025 | 640 | 1.92 | R7\nWest | Q4 2025 | 700 | 2.1 | R7"
+            }
+          ]
+        }
+      },
+      "clone_answers": {
+        "jan_defaults": "A full charge of the R7 warehouse robot takes 90 minutes on the docking station [1].",
+        "clone_tuned": "A full charge of the Acme R7 warehouse robot takes 90 minutes on the docking station. Opportunity charging to 80% takes 45 minutes. This information is specified in the battery and charging section of the product specification [1]."
+      }
+    },
+    {
+      "question": "How long is the battery warranty?",
+      "jan_top3_unfiltered": [
+        {
+          "file": "r7_product_spec.docx",
+          "chunk": 2,
+          "score": 0.525090217590332
+        },
+        {
+          "file": "employee_handbook.pdf",
+          "chunk": 1,
+          "score": 0.3365286886692047
+        },
+        {
+          "file": "r7_product_spec.docx",
+          "chunk": 1,
+          "score": 0.3127284646034241
+        }
+      ],
+      "variants": {
+        "jan": {
+          "answer_in_context": true,
+          "hits": [
+            {
+              "file": "r7_product_spec.docx",
+              "chunk": 2,
+              "score": 0.525090217590332,
+              "text": "arranty\nThe R7 comes with a 24-month warranty covering parts and labour. The battery is covered for 3,000 charge cycles or 36 months, whichever comes first. Damage from misuse is excluded.\nTechnical data\nParameter\nValue\nPayload\n600 kg\nMaximum speed\n2.0 m/s\nDimensions (L x W x H)\n1100 x 750 x 320 mm\nWeight\n185 kg\nNavigation\nLiDAR + stereo cameras, no floor markers needed\nIP rating\nIP54\nOperating temperature\n0 to 40 °C"
+            },
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 1,
+              "score": 0.3365286886692047,
+              "text": "mmitments are met. Overtime must be approved in advance by the line manager\n\nand is compensated with time off in lieu at a rate of 1:1.\n\n2. Vacation and leave\n\nFull-time employees receive 27 days of paid vacation per calendar year. Part-time employees receive a\n\npro-rated amount. Unused vacation days can be carried over until March 31 of the following year, after which\n\nthey expire. Vacation requests longer than five consecutive days must be submitted at least four weeks in\n\nadvance through the HR portal. P"
+            },
+            {
+              "file": "r7_product_spec.docx",
+              "chunk": 1,
+              "score": 0.3127284646034241,
+              "text": "me is 10 hours in mixed operation.\nSafety\nThe robot is certified to ISO 3691-4. It stops within 0.3 m at full speed when an obstacle is detected. Emergency stop buttons are located on all four sides. The maximum speed in shared zones with people is limited to 1.0 m/s.\nMaintenance\nWheels and brushes should be inspected every 500 operating hours. The LiDAR window must be cleaned weekly. Firmware updates are delivered over the air every quarter.\nWarranty\nThe R7 comes with a 24-month warranty covering parts and"
+            }
+          ]
+        },
+        "clone_minilm_k3_t0.3": {
+          "answer_in_context": true,
+          "hits": [
+            {
+              "file": "r7_product_spec.docx",
+              "chunk": 2,
+              "score": 0.479657900512808,
+              "text": "kly. Firmware updates are delivered over the air every quarter.\nWarranty\nThe R7 comes with a 24-month warranty covering parts and labour. The battery is covered for 3,000 charge cycles or 36 months, whichever comes first. Damage from misuse is excluded.\nTechnical data\nParameter | Value\nPayload | 600 kg\nMaximum speed | 2.0 m/s\nDimensions (L x W x H) | 1100 x 750 x 320 mm\nWeight | 185 kg\nNavigation | LiDAR + stereo cameras, no floor markers needed\nIP rating | IP54\nOperating temperature | 0 to 40 °C"
+            },
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 1,
+              "score": 0.3254989581433055,
+              "text": "organise their time\nfreely as long as team commitments are met. Overtime must be approved in advance by the line manager\nand is compensated with time off in lieu at a rate of 1:1.\n2. Vacation and leave\nFull-time employees receive 27 days of paid vacation per calendar year. Part-time employees receive a\npro-rated amount. Unused vacation days can be carried over until March 31 of the following year, after which\nthey expire."
+            },
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 9,
+              "score": 0.3136785289871361,
+              "text": "obation; during the six-month\nprobation period it is two weeks. All equipment must be returned on the last working day. Employees receive\na written reference letter within two weeks after leaving."
+            }
+          ]
+        },
+        "clone_openai_k3_t0.3": {
+          "answer_in_context": true,
+          "hits": [
+            {
+              "file": "r7_product_spec.docx",
+              "chunk": 2,
+              "score": 0.36760413646698,
+              "text": "kly. Firmware updates are delivered over the air every quarter.\nWarranty\nThe R7 comes with a 24-month warranty covering parts and labour. The battery is covered for 3,000 charge cycles or 36 months, whichever comes first. Damage from misuse is excluded.\nTechnical data\nParameter | Value\nPayload | 600 kg\nMaximum speed | 2.0 m/s\nDimensions (L x W x H) | 1100 x 750 x 320 mm\nWeight | 185 kg\nNavigation | LiDAR + stereo cameras, no floor markers needed\nIP rating | IP54\nOperating temperature | 0 to 40 °C"
+            },
+            {
+              "file": "r7_product_spec.docx",
+              "chunk": 1,
+              "score": 0.30335742235183716,
+              "text": "kes 45 minutes. Typical runtime is 10 hours in mixed operation.\nSafety\nThe robot is certified to ISO 3691-4. It stops within 0.3 m at full speed when an obstacle is detected. Emergency stop buttons are located on all four sides. The maximum speed in shared zones with people is limited to 1.0 m/s.\nMaintenance\nWheels and brushes should be inspected every 500 operating hours. The LiDAR window must be cleaned weekly. Firmware updates are delivered over the air every quarter."
+            }
+          ]
+        },
+        "clone_openai_k5_t0.2": {
+          "answer_in_context": true,
+          "hits": [
+            {
+              "file": "r7_product_spec.docx",
+              "chunk": 2,
+              "score": 0.36760413646698,
+              "text": "kly. Firmware updates are delivered over the air every quarter.\nWarranty\nThe R7 comes with a 24-month warranty covering parts and labour. The battery is covered for 3,000 charge cycles or 36 months, whichever comes first. Damage from misuse is excluded.\nTechnical data\nParameter | Value\nPayload | 600 kg\nMaximum speed | 2.0 m/s\nDimensions (L x W x H) | 1100 x 750 x 320 mm\nWeight | 185 kg\nNavigation | LiDAR + stereo cameras, no floor markers needed\nIP rating | IP54\nOperating temperature | 0 to 40 °C"
+            },
+            {
+              "file": "r7_product_spec.docx",
+              "chunk": 1,
+              "score": 0.30335742235183716,
+              "text": "kes 45 minutes. Typical runtime is 10 hours in mixed operation.\nSafety\nThe robot is certified to ISO 3691-4. It stops within 0.3 m at full speed when an obstacle is detected. Emergency stop buttons are located on all four sides. The maximum speed in shared zones with people is limited to 1.0 m/s.\nMaintenance\nWheels and brushes should be inspected every 500 operating hours. The LiDAR window must be cleaned weekly. Firmware updates are delivered over the air every quarter."
+            },
+            {
+              "file": "sales_and_prices.xlsx",
+              "chunk": 2,
+              "score": 0.27927035093307495,
+              "text": "# Sheet: Price list\nProduct | List price (EUR) | Lead time (weeks)\nR5 compact robot | 38000 | 6\nR7 warehouse robot | 54000 | 8\nDocking station | 4200 | 2\nFleet manager licence (per robot/year) | 1800 | 0\nExtended warranty (+24 months) | 6500 | 0"
+            },
+            {
+              "file": "employee_handbook.pdf",
+              "chunk": 9,
+              "score": 0.2671305537223816,
+              "text": "obation; during the six-month\nprobation period it is two weeks. All equipment must be returned on the last working day. Employees receive\na written reference letter within two weeks after leaving."
+            },
+            {
+              "file": "r7_product_spec.docx",
+              "chunk": 0,
+              "score": 0.24942845106124878,
+              "text": "Product specification: Acme R7 warehouse robot\nOverview\nThe R7 is an autonomous mobile robot for warehouse picking. It navigates with LiDAR and stereo cameras and integrates with common warehouse management systems through a REST API.\nBattery and charging\nThe R7 uses a 48 V lithium iron phosphate battery with a capacity of 2.4 kWh. A full charge takes 90 minutes on the docking station; opportunity charging to 80% takes 45 minutes. Typical runtime is 10 hours in mixed operation."
+            }
+          ]
+        }
+      },
+      "clone_answers": {
+        "jan_defaults": "The battery warranty is for 3,000 charge cycles or 36 months, whichever comes first [1].",
+        "clone_tuned": "The battery warranty for the R7 warehouse robot covers 3,000 charge cycles or 36 months, whichever comes first [1]."
+      }
+    },
+    {
+      "question": "How many units did the West region sell in Q4 2025, and what does one R7 cost?",
+      "jan_top3_unfiltered": [
+        {
+          "file": "sales_and_prices.xlsx",
+          "chunk": 1,
+          "score": 0.5216684341430664
+        },
+        {
+          "file": "sales_and_prices.xlsx",
+          "chunk": 0,
+          "score": 0.43075236678123474
+        },
+        {
+          "file": "r7_product_spec.docx",
+          "chunk": 2,
+          "score": 0.4144917130470276
+        }
+      ],
+      "variants": {
+        "jan": {
+          "answer_in_context": true,
+          "hits": [
+            {
+              "file": "sales_and_prices.xlsx",
+              "chunk": 1,
+              "score": 0.5216684341430664,
+              "text": "\t210\t0.63\tR5\nEast\tQ4 2025\t260\t0.78\tR5\n\n# Sheet: Price list\nProduct\tList price (EUR)\tLead time (weeks)\nR5 compact robot\t38000\t6\nR7 warehouse robot\t54000\t8\nDocking station\t4200\t2\nFleet manager licence (per robot/year)\t1800\t0\nExtended warranty (+24 months)\t6500\t0\n\n"
+            },
+            {
+              "file": "sales_and_prices.xlsx",
+              "chunk": 0,
+              "score": 0.43075236678123474,
+              "text": "# Sheet: Sales 2025\nRegion\tQuarter\tUnits sold\tRevenue (EUR million)\tTop product\nNorth\tQ1 2025\t410\t1.23\tR7\nNorth\tQ2 2025\t455\t1.37\tR7\nNorth\tQ3 2025\t502\t1.51\tR7\nNorth\tQ4 2025\t560\t1.68\tR7\nSouth\tQ1 2025\t300\t0.9\tR7\nSouth\tQ2 2025\t318\t0.95\tR7\nSouth\tQ3 2025\t290\t0.87\tR7\nSouth\tQ4 2025\t344\t1.03\tR7\nWest\tQ1 2025\t520\t1.56\tR7\nWest\tQ2 2025\t610\t1.83\tR7\nWest\tQ3 2025\t640\t1.92\tR7\nWest\tQ4 2025\t700\t2.1\tR7\nEast\tQ1 2025\t150\t0.45\tR5\nEast\tQ2 2025\t170\t0.51\tR5\nEast\tQ3 2025\t210\t0.63\tR5\nEast\tQ4 2025\t260\t0.78\tR5\n\n# Sheet: Price list\nProdu"
+            },
+            {
+              "file": "r7_product_spec.docx",
+              "chunk": 2,
+              "score": 0.4144917130470276,
+              "text": "arranty\nThe R7 comes with a 24-month warranty covering parts and labour. The battery is covered for 3,000 charge cycles or 36 months, whichever comes first. Damage from misuse is excluded.\nTechnical data\nParameter\nValue\nPayload\n600 kg\nMaximum speed\n2.0 m/s\nDimensions (L x W x H)\n1100 x 750 x 320 mm\nWeight\n185 kg\nNavigation\nLiDAR + stereo cameras, no floor markers needed\nIP rating\nIP54\nOperating temperature\n0 to 40 °C"
+            }
+          ]
+        },
+        "clone_minilm_k3_t0.3": {
+          "answer_in_context": false,
+          "hits": [
+            {
+              "file": "r7_product_spec.docx",
+              "chunk": 2,
+              "score": 0.4458920053122286,
+              "text": "kly. Firmware updates are delivered over the air every quarter.\nWarranty\nThe R7 comes with a 24-month warranty covering parts and labour. The battery is covered for 3,000 charge cycles or 36 months, whichever comes first. Damage from misuse is excluded.\nTechnical data\nParameter | Value\nPayload | 600 kg\nMaximum speed | 2.0 m/s\nDimensions (L x W x H) | 1100 x 750 x 320 mm\nWeight | 185 kg\nNavigation | LiDAR + stereo cameras, no floor markers needed\nIP rating | IP54\nOperating temperature | 0 to 40 °C"
+            },
+            {
+              "file": "sales_and_prices.xlsx",
+              "chunk": 1,
+              "score": 0.43113905137353437,
+              "text": "# Sheet: Sales 2025\nRegion | Quarter | Units sold | Revenue (EUR million) | Top product\nEast | Q1 2025 | 150 | 0.45 | R5\nEast | Q2 2025 | 170 | 0.51 | R5\nEast | Q3 2025 | 210 | 0.63 | R5\nEast | Q4 2025 | 260 | 0.78 | R5"
+            },
+            {
+              "file": "sales_and_prices.xlsx",
+              "chunk": 2,
+              "score": 0.40768809047485244,
+              "text": "# Sheet: Price list\nProduct | List price (EUR) | Lead time (weeks)\nR5 compact robot | 38000 | 6\nR7 warehouse robot | 54000 | 8\nDocking station | 4200 | 2\nFleet manager licence (per robot/year) | 1800 | 0\nExtended warranty (+24 months) | 6500 | 0"
+            }
+          ]
+        },
+        "clone_openai_k3_t0.3": {
+          "answer_in_context": true,
+          "hits": [
+            {
+              "file": "sales_and_prices.xlsx",
+              "chunk": 0,
+              "score": 0.6780336499214172,
+              "text": "# Sheet: Sales 2025\nRegion | Quarter | Units sold | Revenue (EUR million) | Top product\nNorth | Q1 2025 | 410 | 1.23 | R7\nNorth | Q2 2025 | 455 | 1.37 | R7\nNorth | Q3 2025 | 502 | 1.51 | R7\nNorth | Q4 2025 | 560 | 1.68 | R7\nSouth | Q1 2025 | 300 | 0.9 | R7\nSouth | Q2 2025 | 318 | 0.95 | R7\nSouth | Q3 2025 | 290 | 0.87 | R7\nSouth | Q4 2025 | 344 | 1.03 | R7\nWest | Q1 2025 | 520 | 1.56 | R7\nWest | Q2 2025 | 610 | 1.83 | R7\nWest | Q3 2025 | 640 | 1.92 | R7\nWest | Q4 2025 | 700 | 2.1 | R7"
+            },
+            {
+              "file": "sales_and_prices.xlsx",
+              "chunk": 1,
+              "score": 0.6287672221660614,
+              "text": "# Sheet: Sales 2025\nRegion | Quarter | Units sold | Revenue (EUR million) | Top product\nEast | Q1 2025 | 150 | 0.45 | R5\nEast | Q2 2025 | 170 | 0.51 | R5\nEast | Q3 2025 | 210 | 0.63 | R5\nEast | Q4 2025 | 260 | 0.78 | R5"
+            },
+            {
+              "file": "sales_and_prices.xlsx",
+              "chunk": 2,
+              "score": 0.4518480896949768,
+              "text": "# Sheet: Price list\nProduct | List price (EUR) | Lead time (weeks)\nR5 compact robot | 38000 | 6\nR7 warehouse robot | 54000 | 8\nDocking station | 4200 | 2\nFleet manager licence (per robot/year) | 1800 | 0\nExtended warranty (+24 months) | 6500 | 0"
+            }
+          ]
+        },
+        "clone_openai_k5_t0.2": {
+          "answer_in_context": true,
+          "hits": [
+            {
+              "file": "sales_and_prices.xlsx",
+              "chunk": 0,
+              "score": 0.6780336499214172,
+              "text": "# Sheet: Sales 2025\nRegion | Quarter | Units sold | Revenue (EUR million) | Top product\nNorth | Q1 2025 | 410 | 1.23 | R7\nNorth | Q2 2025 | 455 | 1.37 | R7\nNorth | Q3 2025 | 502 | 1.51 | R7\nNorth | Q4 2025 | 560 | 1.68 | R7\nSouth | Q1 2025 | 300 | 0.9 | R7\nSouth | Q2 2025 | 318 | 0.95 | R7\nSouth | Q3 2025 | 290 | 0.87 | R7\nSouth | Q4 2025 | 344 | 1.03 | R7\nWest | Q1 2025 | 520 | 1.56 | R7\nWest | Q2 2025 | 610 | 1.83 | R7\nWest | Q3 2025 | 640 | 1.92 | R7\nWest | Q4 2025 | 700 | 2.1 | R7"
+            },
+            {
+              "file": "sales_and_prices.xlsx",
+              "chunk": 1,
+              "score": 0.6287672221660614,
+              "text": "# Sheet: Sales 2025\nRegion | Quarter | Units sold | Revenue (EUR million) | Top product\nEast | Q1 2025 | 150 | 0.45 | R5\nEast | Q2 2025 | 170 | 0.51 | R5\nEast | Q3 2025 | 210 | 0.63 | R5\nEast | Q4 2025 | 260 | 0.78 | R5"
+            },
+            {
+              "file": "sales_and_prices.xlsx",
+              "chunk": 2,
+              "score": 0.4518480896949768,
+              "text": "# Sheet: Price list\nProduct | List price (EUR) | Lead time (weeks)\nR5 compact robot | 38000 | 6\nR7 warehouse robot | 54000 | 8\nDocking station | 4200 | 2\nFleet manager licence (per robot/year) | 1800 | 0\nExtended warranty (+24 months) | 6500 | 0"
+            },
+            {
+              "file": "r7_product_spec.docx",
+              "chunk": 0,
+              "score": 0.3867229223251343,
+              "text": "Product specification: Acme R7 warehouse robot\nOverview\nThe R7 is an autonomous mobile robot for warehouse picking. It navigates with LiDAR and stereo cameras and integrates with common warehouse management systems through a REST API.\nBattery and charging\nThe R7 uses a 48 V lithium iron phosphate battery with a capacity of 2.4 kWh. A full charge takes 90 minutes on the docking station; opportunity charging to 80% takes 45 minutes. Typical runtime is 10 hours in mixed operation."
+            },
+            {
+              "file": "r7_product_spec.docx",
+              "chunk": 2,
+              "score": 0.37516891956329346,
+              "text": "kly. Firmware updates are delivered over the air every quarter.\nWarranty\nThe R7 comes with a 24-month warranty covering parts and labour. The battery is covered for 3,000 charge cycles or 36 months, whichever comes first. Damage from misuse is excluded.\nTechnical data\nParameter | Value\nPayload | 600 kg\nMaximum speed | 2.0 m/s\nDimensions (L x W x H) | 1100 x 750 x 320 mm\nWeight | 185 kg\nNavigation | LiDAR + stereo cameras, no floor markers needed\nIP rating | IP54\nOperating temperature | 0 to 40 °C"
+            }
+          ]
+        }
+      },
+      "clone_answers": {
+        "jan_defaults": "The West region sold 700 units in Q4 2025. One R7 warehouse robot costs 54,000 EUR. \n\nThis information comes from the sales data where West region's units sold in Q4 2025 is 700 [1], and from the price list where the R7 warehouse robot is priced at 54,000 EUR [3].",
+        "clone_tuned": "The West region sold 700 units in Q4 2025. One R7 warehouse robot costs EUR 54,000 according to the price list. This information is from the sales data and price list provided in the documents [1] and [3]."
+      }
+    },
+    {
+      "question": "What is the capital of Australia?",
+      "jan_top3_unfiltered": [
+        {
+          "file": "sales_and_prices.xlsx",
+          "chunk": 1,
+          "score": 0.16663511097431183
+        },
+        {
+          "file": "r7_product_spec.docx",
+          "chunk": 0,
+          "score": 0.14947010576725006
+        },
+        {
+          "file": "sales_and_prices.xlsx",
+          "chunk": 0,
+          "score": 0.13686388731002808
+        }
+      ],
+      "variants": {
+        "jan": {
+          "answer_in_context": true,
+          "hits": []
+        },
+        "clone_minilm_k3_t0.3": {
+          "answer_in_context": true,
+          "hits": []
+        },
+        "clone_openai_k3_t0.3": {
+          "answer_in_context": true,
+          "hits": []
+        },
+        "clone_openai_k5_t0.2": {
+          "answer_in_context": true,
+          "hits": []
+        }
+      },
+      "clone_answers": {
+        "jan_defaults": "The capital of Australia is Canberra.",
+        "clone_tuned": "The capital of Australia is Canberra."
+      }
+    }
+  ]
+}

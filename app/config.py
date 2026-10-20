@@ -31,8 +31,8 @@ class Settings:
     admin_token: str | None = None
     rate_limit_per_min: int = 0  # questions per visitor (client cookie) per minute; 0 = off (local)
     rate_limit_ip_per_min: int = 0  # per client IP, catches visitors that drop the cookie; 0 = off
-    kb_chunk_size: int = 1000
-    kb_overlap: int = 150
+    kb_chunk_size: int = 350
+    kb_overlap: int = 70
     kb_top_k: int = 8
     # gpt-4.1-mini invented ECTS numbers in the DTM eval; gpt-4.1 answered or refused correctly.
     kb_chat_model: str = "gpt-4.1"
@@ -143,8 +143,8 @@ def get_settings() -> Settings:
         admin_token=os.getenv("ADMIN_TOKEN") or None,
         rate_limit_per_min=int(os.getenv("RATE_LIMIT_PER_MIN", "0")),
         rate_limit_ip_per_min=int(os.getenv("RATE_LIMIT_IP_PER_MIN", "0")),
-        kb_chunk_size=int(os.getenv("KB_CHUNK_SIZE", "1000")),
-        kb_overlap=int(os.getenv("KB_OVERLAP", "150")),
+        kb_chunk_size=int(os.getenv("KB_CHUNK_SIZE", "350")),
+        kb_overlap=int(os.getenv("KB_OVERLAP", "70")),
         kb_top_k=int(os.getenv("KB_TOP_K", "8")),
         kb_chat_model=os.getenv("KB_CHAT_MODEL", "gpt-4.1"),
         kb_plan_model=os.getenv("KB_PLAN_MODEL", "gpt-4.1-mini"),

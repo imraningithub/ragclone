@@ -5,7 +5,7 @@ import mimetypes
 import os
 from pathlib import Path
 
-from .chunking import chunk_text
+from .chunking import chunk_pages, chunk_text
 from .config import RagSettings, Settings
 from .parsing import parse_document, parse_pdf_pages
 
@@ -119,10 +119,9 @@ def ingest_kb_file(store, provider, settings: Settings, *, collection: str, path
     metas: list[dict] = []
     if Path(path).suffix.lower() == ".pdf":
         file_type = "application/pdf"
-        for page, text in parse_pdf_pages(path):
-            for c in chunk_text(text, int(settings.kb_chunk_size), int(settings.kb_overlap)):
-                chunks.append(c)
-                metas.append({"page": page})
+        for page, c in chunk_pages(parse_pdf_pages(path), int(settings.kb_chunk_size), int(settings.kb_overlap)):
+            chunks.append(c)
+            metas.append({"page": page})
     else:
         text = parse_document(path, file_type or None)
         chunks = chunk_text(text, int(settings.kb_chunk_size), int(settings.kb_overlap))

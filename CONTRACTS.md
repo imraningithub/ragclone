@@ -133,8 +133,8 @@ Uploaded files are saved under `data/uploads/<thread_id>/<file_id>_<name>` (the 
 # KB mode (DTM Studienassistent) — additional contracts
 
 Settings (app/config.py, done): `app_mode` ("chat"|"kb"), `kb_name`, `kb_dir`, `kb_collection` (= "kb_<kb_name>"),
-`refusal_contact`, `chat_temperature`, `admin_token`, `rate_limit_per_min` (0=off), `kb_chunk_size` (1000),
-`kb_overlap` (150), `kb_top_k` (6), `kb_threshold` (0.2), `kb_log_path`. All have defaults, so existing
+`refusal_contact`, `chat_temperature`, `admin_token`, `rate_limit_per_min` (0=off), `kb_chunk_size` (350),
+`kb_overlap` (70), `kb_top_k` (6), `kb_threshold` (0.2), `kb_log_path`. All have defaults, so existing
 `Settings(...)` constructions in tests keep working.
 
 ## app/parsing.py (agent A)
@@ -155,8 +155,10 @@ def parse_pdf_pages(path: str) -> list[tuple[int, str]]   # 1-based page numbers
 ```python
 def ingest_kb_file(store, provider, settings, *, collection: str, path: str, name: str) -> dict  # FileInfo
 ```
-- Always embeddings mode. PDFs: `parse_pdf_pages`, chunk each page separately with
-  `chunk_text(page_text, settings.kb_chunk_size, settings.kb_overlap)`, meta `{"page": n}`.
+- Always embeddings mode. PDFs: `parse_pdf_pages`, then `chunk_pages(pages, settings.kb_chunk_size, settings.kb_overlap)`
+  (chunks each page with `chunk_text`, meta `{"page": n}`). A chunk that starts inside a legal section (`§ n Title`)
+  gets that heading as its first line, so the title is embedded and keyword-indexed with it. Changing the chunking
+  needs `scripts/ingest_kb.py --rebuild`.
   Other types: `parse_document` + chunk, meta `{}`. Embed in batches of 64, `create_collection`, `add_file`, `insert_chunks`.
 - Empty text -> ValueError("no extractable text") (KB files must have text).
 

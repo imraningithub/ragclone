@@ -217,3 +217,35 @@ def test_program_name_is_stripped_from_queries():
     assert _strip_program_name("Regelstudienzeit DTM") == "Regelstudienzeit"
     assert _strip_program_name("Digital Technology and Management Bachelor") == "Bachelor"
     assert _strip_program_name("DTMX Modul") == "DTMX Modul"  # whole words only
+
+
+class _RankedStore:
+    """Fixed rankings per query text (the provider echoes the text as its embedding)."""
+
+    def __init__(self, dense):
+        self.dense = dense
+
+    def search(self, collection, query_embedding, limit=3, threshold=0.3, mode="auto"):
+        return [{"chunk_id": c, "score": 0.9, "file_id": "f", "file_name": "f.pdf", "chunk_index": i,
+                 "text": c, "meta": {}} for i, c in enumerate(self.dense.get(query_embedding, []))]
+
+    def keyword_search(self, collection, query, limit=20):
+        return []
+
+
+class _EchoProvider:
+    def embed(self, texts):
+        return list(texts)
+
+
+@pytest.mark.parametrize("weight, top", [(2.0, "a"), (1.0, "b")])
+def test_question_weight_decides_between_question_and_expansions(monkeypatch, weight, top):
+    # "a" is the question's best hit; "b" tops both keyword-style expansions. Two expansion lists beat one
+    # question list only when the question is not weighted up.
+    from app import retrieval
+
+    store = _RankedStore({"Q": ["a"], "K1": ["b"], "K2": ["b", "a"]})
+    plan = {"standalone": "Q", "queries_de": ["K1"], "queries_en": ["K2"]}
+    monkeypatch.setattr(retrieval, "FULL_QUERY_WEIGHT", weight)
+    hits = retrieve(store, _EchoProvider(), collection="kb", plan=plan, question="Q", top_k=2, threshold=0.2)
+    assert hits[0]["chunk_id"] == top

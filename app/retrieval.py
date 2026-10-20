@@ -154,13 +154,15 @@ def _parse_plan(raw: str, question: str) -> dict:
             "queries_en": _queries(data.get("queries_en"), question)}
 
 
-def plan_query(provider, history: list[dict], question: str, model: str | None = None) -> dict:
+def plan_query(provider, history: list[dict], question: str, model: str | None = None, usage=None) -> dict:
     """Resolve follow-ups, detect the student's language and produce German and English search queries.
 
     Never raises: any provider error or malformed output falls back to the raw question.
     """
     try:
-        raw = provider.complete(_plan_messages(history, question), json_mode=True, temperature=0, model=model)
+        extra = {"usage": usage} if usage is not None else {}  # only providers that support it get it
+        raw = provider.complete(_plan_messages(history, question), json_mode=True, temperature=0, model=model,
+                                **extra)
         return _parse_plan(raw, question)
     except Exception as exc:  # noqa: BLE001 - planning is best-effort
         log.warning("plan_query fallback: %s", exc)
@@ -184,7 +186,7 @@ def _strip_program_name(query: str) -> str:
 
 
 def retrieve(store, provider, *, collection: str, plan: dict, question: str, top_k: int,
-             threshold: float, max_per_file: int = MAX_PER_FILE) -> list[dict]:
+             threshold: float, max_per_file: int = MAX_PER_FILE, usage=None) -> list[dict]:
     """Hybrid search: vector + keyword (BM25) results for the question, the standalone rewrite and every
     German/English query, merged with reciprocal rank fusion.
 
@@ -203,7 +205,7 @@ def retrieve(store, provider, *, collection: str, plan: dict, question: str, top
             weights.append(w)
     if not texts or top_k <= 0:
         return []
-    embeddings = provider.embed(texts)
+    embeddings = provider.embed(texts, usage=usage) if usage is not None else provider.embed(texts)
 
     rrf: dict[str, float] = {}
     hits: dict[str, dict] = {}

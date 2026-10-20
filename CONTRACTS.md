@@ -256,3 +256,20 @@ settings gear hidden unless URL has `?admin=1`. `done.refused` -> style the mess
   `ThreadStore.create(title, owner=None)`, `list(owner=None)`, `get(id, owner=None)`; with an owner, other owners'
   threads raise KeyError (-> 404 for get/patch/delete/files/chat). `threads.owner` column is added to old DBs; their
   threads keep owner NULL. Chat mode passes no owner (unscoped, no cookie).
+
+## KB mode — cost tracking (spec: imraningithub/ragclone#1)
+- `app/costs.py`: `PRICES` (USD per 1M tokens: input, cached input, output; `PRICES_AS_OF`, `PRICES_SOURCE`, from
+  `docs/research/openai-pricing.md`), `call_cost(model, input, cached, output) -> float | None` (None = model not in
+  the table, never 0), `UsageMeter` (one per question; `step(name)` returns the recorder passed to a provider as
+  `usage`; `calls`, `total_usd`, `unknown`), `CostStore(db_path, clock)` (`data/kb_costs.db`: `questions` and `calls`
+  tables; `record_question(meter, visitor, reason, question, timing)`, `summary(range)` with range
+  today/7d/30d/all in Europe/Berlin calendar days).
+- Providers: `complete(..., usage=None)`, `chat_stream(..., usage=None)`, `embed(texts, usage=None)`; when given,
+  `usage(model, input_tokens, cached_tokens, output_tokens)` is called once per API call (stream: after the last
+  token). FakeProvider reports `plan_usage` / `answer_usage` / `embed_tokens` when set, else ~4 chars per token.
+  `retrieval.plan_query(..., usage=None)` and `retrieve(..., usage=None)` pass it on only when given.
+- `create_app(settings, provider, clock=time.time)`. KB chat records steps planner / embeddings / answer and writes
+  one cost record when the answer is complete; the `kb_log.jsonl` line adds `usage` (the calls) and `cost_usd`.
+- `GET /api/admin/costs?range=` (admin token, else 403; bad range 400) -> `{range, questions, spend_usd,
+  per_question: {mean, median, p95 (nearest rank)}, unknown_cost_questions, pricing: {as_of, source, currency,
+  estimated}}`. `GET /admin/costs` serves `web/admin.html` (no data; token in sessionStorage `dtm_admin_token`).

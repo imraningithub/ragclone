@@ -5,9 +5,12 @@ import hashlib
 import json
 import math
 import re
-from typing import Iterator, Protocol
+from typing import Callable, Iterator, Protocol
 
 from .config import Settings
+
+
+Usage = Callable[..., None]
 
 
 class Provider(Protocol):
@@ -15,11 +18,14 @@ class Provider(Protocol):
     chat_model: str
     embed_model: str
 
-    def embed(self, texts: list[str]) -> list[list[float]]: ...
+    # `usage`, when given, is called once per API call as usage(model, input_tokens, cached_tokens,
+    # output_tokens) so the caller can price it (see app/costs.py UsageMeter.step).
+    def embed(self, texts: list[str], usage: Usage | None = None) -> list[list[float]]: ...
     def chat_stream(self, messages: list[dict], temperature: float | None = None,
-                    model: str | None = None) -> Iterator[str]: ...
+                    model: str | None = None, usage: Usage | None = None) -> Iterator[str]: ...
     def complete(self, messages: list[dict], *, json_mode: bool = False,
-                 temperature: float | None = None, model: str | None = None) -> str: ...
+                 temperature: float | None = None, model: str | None = None,
+                 usage: Usage | None = None) -> str: ...
     def count_tokens(self, text: str) -> int: ...
 
 
@@ -42,14 +48,14 @@ class OpenAIProvider:
         self.chat_model = settings.chat_model
         self.embed_model = settings.embed_model
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    def embed(self, texts: list[str], usage: Usage | None = None) -> list[list[float]]:
         if not texts:
             return []
         resp = self.client.embeddings.create(model=self.embed_model, input=texts)
         return [d.embedding for d in sorted(resp.data, key=lambda d: d.index)]
 
     def chat_stream(self, messages: list[dict], temperature: float | None = None,
-                    model: str | None = None) -> Iterator[str]:
+                    model: str | None = None, usage: Usage | None = None) -> Iterator[str]:
         kwargs: dict = {}
         if temperature is not None:
             kwargs["temperature"] = temperature
@@ -61,7 +67,8 @@ class OpenAIProvider:
                 yield event.choices[0].delta.content
 
     def complete(self, messages: list[dict], *, json_mode: bool = False,
-                 temperature: float | None = None, model: str | None = None) -> str:
+                 temperature: float | None = None, model: str | None = None,
+                 usage: Usage | None = None) -> str:
         kwargs: dict = {}
         if temperature is not None:
             kwargs["temperature"] = temperature
@@ -83,8 +90,23 @@ class FakeProvider:
     chat_model = "fake-chat"
     embed_model = "fake-embed-64"
     dim = 64
+    # Fixed usage for cost tests: (input, cached, output) per call and embedding tokens per call.
+    # None = estimate from the text (~4 characters per token).
+    plan_usage: tuple[int, int, int] | None = None
+    answer_usage: tuple[int, int, int] | None = None
+    embed_tokens: int | None = None
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    def _report(self, usage: Usage | None, model: str, fixed, messages: list[dict], reply: str) -> None:
+        if usage is None:
+            return
+        if fixed is None:
+            fixed = (sum(approx_tokens(str(m.get("content") or "")) for m in messages), 0, approx_tokens(reply))
+        usage(model, *fixed)
+
+    def embed(self, texts: list[str], usage: Usage | None = None) -> list[list[float]]:
+        if usage is not None and texts:
+            tokens = self.embed_tokens if self.embed_tokens is not None else sum(approx_tokens(t) for t in texts)
+            usage(self.embed_model, tokens, 0, 0)
         out = []
         for t in texts:
             v = [0.0] * self.dim
@@ -96,18 +118,28 @@ class FakeProvider:
         return out
 
     def chat_stream(self, messages: list[dict], temperature: float | None = None,
-                    model: str | None = None) -> Iterator[str]:
+                    model: str | None = None, usage: Usage | None = None) -> Iterator[str]:
         system = "\n".join(m["content"] for m in messages if m["role"] == "system")
         user = messages[-1]["content"] if messages else ""
         if "<excerpt" in system:  # KB answer: stream the same text complete() would return
-            yield from re.findall(r"\s*\S+", self.complete(messages, temperature=temperature, model=model))
+            reply = self.complete(messages, temperature=temperature, model=model)
+            yield from re.findall(r"\s*\S+", reply)
+            # Like OpenAI with include_usage: usage arrives after the last token.
+            self._report(usage, model or self.chat_model, self.answer_usage, messages, reply)
             return
         reply = f"(fake) You asked: {user}. Context chars: {len(system)}."
         for word in reply.split(" "):
             yield word + " "
 
     def complete(self, messages: list[dict], *, json_mode: bool = False,
-                 temperature: float | None = None, model: str | None = None) -> str:
+                 temperature: float | None = None, model: str | None = None,
+                 usage: Usage | None = None) -> str:
+        reply = self._complete(messages, json_mode)
+        self._report(usage, model or self.chat_model, self.plan_usage if json_mode else self.answer_usage,
+                     messages, reply)
+        return reply
+
+    def _complete(self, messages: list[dict], json_mode: bool) -> str:
         system = "\n".join(m["content"] for m in messages if m["role"] == "system")
         last_user = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
         if json_mode:

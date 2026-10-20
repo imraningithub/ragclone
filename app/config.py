@@ -53,6 +53,11 @@ class Settings:
         return str(self.data_dir / "rag.db")
 
     @property
+    def kb_costs_db_path(self) -> str:
+        # Cost records live apart from chat history, so purging question text never touches chats.
+        return str(self.data_dir / "kb_costs.db")
+
+    @property
     def threads_db_path(self) -> str:
         # KB mode keeps its own chat history, separate from "chat with your files" mode.
         return str(self.data_dir / ("kb_threads.db" if self.app_mode == "kb" else "threads.db"))

@@ -27,6 +27,9 @@ PRICES_SOURCE = "https://developers.openai.com/api/docs/pricing"
 
 TZ = ZoneInfo("Europe/Berlin")
 RANGES = ("today", "7d", "30d", "all")
+# Question outcomes: ANSWERED (stored as reason NULL), the refusals no_context / no_answer / uncited, and
+# ABORTED (the client went away mid-answer) / ERROR (the model call failed): both still cost money.
+ANSWERED, ABORTED, ERROR = "answered", "aborted", "error"
 
 
 def call_cost(model: str, input_tokens: int, cached_tokens: int, output_tokens: int) -> float | None:
@@ -148,8 +151,15 @@ class CostStore:
         start = range_start(range_name, self._clock())
         where, args = ("WHERE ts >= ?", (start,)) if start is not None else ("", ())
         with self._lock:
-            rows = self._conn.execute(f"SELECT total_usd, unknown FROM questions {where}", args).fetchall()
+            rows = self._conn.execute(f"SELECT total_usd, unknown, estimated, reason FROM questions {where}",
+                                      args).fetchall()
         costs = [r["total_usd"] for r in rows]
+        by_reason: dict[str, dict] = {}
+        for r in rows:
+            entry = by_reason.setdefault(r["reason"] or ANSWERED, {"reason": r["reason"] or ANSWERED,
+                                                                   "questions": 0, "spend_usd": 0.0})
+            entry["questions"] += 1
+            entry["spend_usd"] += r["total_usd"]
         return {
             "range": range_name,
             "questions": len(costs),
@@ -158,6 +168,9 @@ class CostStore:
                              "median": statistics.median(costs) if costs else None,
                              "p95": _p95(costs) if costs else None},
             "unknown_cost_questions": sum(r["unknown"] for r in rows),
+            "estimated_questions": sum(r["estimated"] for r in rows),
+            # answered first, then refusals and failures by count
+            "by_reason": sorted(by_reason.values(), key=lambda e: (e["reason"] != ANSWERED, -e["questions"])),
             "pricing": {"as_of": PRICES_AS_OF, "source": PRICES_SOURCE, "currency": "USD", "estimated": True},
         }
 

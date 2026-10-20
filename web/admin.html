@@ -21,6 +21,12 @@
     .note { color: var(--muted); font-size: .85rem; margin-top: 12px; }
     .warn { color: var(--danger); }
     .error { color: var(--danger); margin-top: 16px; }
+    .section-title { font-size: 1rem; margin: 28px 0 8px; }
+    table.data { width: 100%; border-collapse: collapse; font-size: .92rem; }
+    table.data th, table.data td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+    table.data th { color: var(--muted); font-weight: 500; }
+    table.data .num { text-align: right; font-variant-numeric: tabular-nums; }
+    table.data .hint { color: var(--muted); font-size: .82rem; }
   </style>
 </head>
 <body>
@@ -41,7 +47,13 @@
       <div class="tile"><div class="label">Spend</div><div class="value" id="spend">–</div></div>
       <div class="tile"><div class="label">Questions</div><div class="value" id="questions">–</div></div>
     </section>
+    <h2 class="section-title">Answered and refused</h2>
+    <table class="data" id="reasons">
+      <thead><tr><th scope="col">Outcome</th><th scope="col" class="num">Questions</th><th scope="col" class="num">Spend</th><th scope="col" class="num">Share of spend</th></tr></thead>
+      <tbody></tbody>
+    </table>
     <p class="note warn" id="unknown" hidden></p>
+    <p class="note" id="estimated" hidden></p>
     <p class="note" id="pricing"></p>
     <p class="error" id="error" role="alert" hidden></p>
   </main>

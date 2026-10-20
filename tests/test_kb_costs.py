@@ -21,10 +21,20 @@ class UsageProvider(FakeProvider):
 
     embed_model = "text-embedding-3-small"
 
-    def __init__(self, answer_output=200):
+    def __init__(self, answer_output=200, answer_text=None):
         self.plan_usage = (1000, 0, 100)
         self.embed_tokens = 300
         self.answer_usage = (2000, 1024, answer_output)
+        self.answer_text = answer_text  # fixed model answer instead of the fake one
+
+    def _complete(self, messages, json_mode):
+        if self.answer_text is not None and not json_mode:
+            return self.answer_text
+        return super()._complete(messages, json_mode)
+
+
+PLAN_AND_EMBED_USD = 0.00056 + 0.000006  # planner (1000*0.40 + 100*1.60)e-6, embeddings 300*0.02e-6
+ANSWER_USD = 0.004064                    # answer (976*2.00 + 1024*0.50 + 200*8.00)e-6
 
 
 def _client(tmp_path, provider=None, **kw):
@@ -169,3 +179,161 @@ def test_request_log_has_usage_and_cost(tmp_path):
     assert rec["usage"][2] | {"usd": None} == {"step": "answer", "model": "gpt-4.1", "input": 2000,
                                                "cached": 1024, "output": 200, "usd": None, "estimated": False}
     assert rec["cost_usd"] == pytest.approx(0.00463)
+
+
+def _by_reason(costs):
+    return {r["reason"]: (r["questions"], pytest.approx(r["spend_usd"])) for r in costs["by_reason"]}
+
+
+@pytest.mark.parametrize("answer_text,reason", [
+    ("NO_ANSWER", "no_answer"),
+    ("Die Anmeldung erfolgt online, ganz sicher.", "uncited"),
+])
+def test_refusals_after_the_answer_call_are_recorded_by_reason(tmp_path, answer_text, reason):
+    client, _ = _client(tmp_path, UsageProvider(answer_text=answer_text))
+    with client:
+        _ask(client)
+        _ask(client, "Wann ist die Prüfung?")
+        costs = client.get("/api/admin/costs?range=all", headers=ADMIN).json()
+    assert _by_reason(costs) == {reason: (2, 2 * (PLAN_AND_EMBED_USD + ANSWER_USD))}
+
+
+def test_no_context_refusal_costs_planner_and_embeddings_only(tmp_path):
+    client, _ = _client(tmp_path, kb_threshold=0.9)
+    with client:
+        _ask(client, "zebra banana trumpet volcano")
+        costs = client.get("/api/admin/costs?range=all", headers=ADMIN).json()
+    assert _by_reason(costs) == {"no_context": (1, PLAN_AND_EMBED_USD)}
+
+
+def _chat_then_disconnect(app, tid, cookie, question, *, send_raises):
+    """Drive one chat request through the ASGI interface (spec 2.3, as uvicorn) and close the "browser tab"
+    right after the first answer text arrives. send_raises=True: later writes fail with OSError (uvicorn's
+    ClientDisconnected is one), which cuts the stream. False: later writes are silently dropped, which is what
+    uvicorn does once it has seen the disconnect."""
+    import json
+
+    import anyio
+
+    async def run():
+        gone = False
+        request_sent = False
+        statuses = []
+
+        async def receive():
+            nonlocal request_sent
+            if not request_sent:
+                request_sent = True
+                return {"type": "http.request", "body": json.dumps({"message": question}).encode(),
+                        "more_body": False}
+            while not gone:
+                await anyio.sleep(0.01)
+            return {"type": "http.disconnect"}
+
+        async def send(message):
+            nonlocal gone
+            if message["type"] == "http.response.start":
+                statuses.append(message["status"])
+            elif gone and send_raises:
+                raise OSError("client disconnected")
+            elif b"event: token" in message.get("body", b""):
+                gone = True
+
+        path = f"/api/threads/{tid}/chat"
+        scope = {"type": "http", "asgi": {"version": "3.0", "spec_version": "2.3"}, "http_version": "1.1",
+                 "method": "POST", "scheme": "http", "path": path, "raw_path": path.encode(), "query_string": b"",
+                 "root_path": "", "client": ("127.0.0.1", 50000), "server": ("testserver", 80),
+                 "headers": [(b"content-type", b"application/json"), (b"cookie", f"dtm_client={cookie}".encode())]}
+        with anyio.fail_after(10):
+            try:
+                await app(scope, receive, send)
+            except OSError:
+                pass  # the server's problem, not the app's
+        return statuses
+
+    return anyio.run(run)
+
+
+ANSWER = "Online im Campusportal [1] bis 15. Mai."
+
+
+def test_stream_cut_mid_answer_is_recorded_as_aborted_with_estimated_tokens(tmp_path):
+    import json
+
+    client, settings = _client(tmp_path, UsageProvider(answer_text=ANSWER))
+    with client:
+        tid = client.post("/api/threads", json={}).json()["id"]
+        _chat_then_disconnect(client.app, tid, client.cookies.get("dtm_client"), Q, send_raises=True)
+        costs = client.get("/api/admin/costs?range=all", headers=ADMIN).json()
+        assert client.get(f"/api/threads/{tid}").json()["messages"] == []  # nothing saved to the chat
+    assert [(r["reason"], r["questions"]) for r in costs["by_reason"]] == [("aborted", 1)]
+    assert costs["estimated_questions"] == 1
+    rec = json.loads(settings.kb_log_path.read_text("utf-8").splitlines()[-1])
+    answer = rec["usage"][-1]
+    assert rec["reason"] == "aborted" and answer["step"] == "answer" and answer["estimated"] is True
+    # ~4 characters per token of the text generated before the cut: at least "Online im Campusportal [1]"
+    # (26 chars = 7 tokens); the server may have pulled a word or two more before it noticed.
+    assert 7 <= answer["output"] <= 10
+    assert answer["input"] > 1000  # estimated from the prompt (system prompt + excerpts)
+    assert rec["cost_usd"] > PLAN_AND_EMBED_USD
+
+
+def test_disconnect_under_uvicorn_finishes_the_answer_with_exact_usage(tmp_path):
+    client, _ = _client(tmp_path, UsageProvider(answer_text=ANSWER))
+    with client:
+        tid = client.post("/api/threads", json={}).json()["id"]
+        assert _chat_then_disconnect(client.app, tid, client.cookies.get("dtm_client"), Q,
+                                     send_raises=False) == [200]
+        costs = client.get("/api/admin/costs?range=all", headers=ADMIN).json()
+    assert _by_reason(costs) == {"answered": (1, PLAN_AND_EMBED_USD + ANSWER_USD)}
+    assert costs["estimated_questions"] == 0
+
+
+class BrokenStreamProvider(UsageProvider):
+    """The answer stream fails after its first words; OpenAI then never reports usage."""
+
+    def chat_stream(self, messages, temperature=None, model=None, usage=None):
+        yield "Online im Campusportal [1]"
+        raise RuntimeError("connection reset")
+
+
+def test_model_error_mid_stream_is_recorded_as_error(tmp_path):
+    client, _ = _client(tmp_path, BrokenStreamProvider())
+    with client:
+        tid = client.post("/api/threads", json={}).json()["id"]
+        body = client.post(f"/api/threads/{tid}/chat", json={"message": Q}).text
+        assert "event: error" in body
+        costs = client.get("/api/admin/costs?range=all", headers=ADMIN).json()
+    assert [(r["reason"], r["questions"]) for r in costs["by_reason"]] == [("error", 1)]
+    assert costs["estimated_questions"] == 1
+
+
+def test_failure_before_streaming_records_the_calls_already_billed(tmp_path):
+    class EmbedFails(UsageProvider):
+        def embed(self, texts, usage=None):
+            raise RuntimeError("embeddings down")
+
+    class FirstChunkFails(UsageProvider):
+        def chat_stream(self, messages, temperature=None, model=None, usage=None):
+            raise RuntimeError("answer model down")
+            yield  # pragma: no cover
+
+    for provider, spend in ((EmbedFails(), 0.00056), (FirstChunkFails(), PLAN_AND_EMBED_USD)):
+        client, _ = _client(tmp_path / type(provider).__name__, provider)
+        with client:
+            tid = client.post("/api/threads", json={}).json()["id"]
+            assert client.post(f"/api/threads/{tid}/chat", json={"message": Q}).status_code == 502
+            costs = client.get("/api/admin/costs?range=all", headers=ADMIN).json()
+        assert _by_reason(costs) == {"error": (1, spend)}, type(provider).__name__
+
+
+def test_rejected_requests_cost_nothing_and_follow_ups_count_individually(tmp_path):
+    client, _ = _client(tmp_path, rate_limit_per_min=2)
+    with client:
+        tid = client.post("/api/threads", json={}).json()["id"]
+        assert client.post(f"/api/threads/{tid}/chat", json={"message": "   "}).status_code == 400
+        assert client.post(f"/api/threads/{tid}/chat", json={"message": Q}).status_code == 200
+        assert client.post(f"/api/threads/{tid}/chat", json={"message": "Und bis wann?"}).status_code == 200
+        assert client.post(f"/api/threads/{tid}/chat", json={"message": Q}).status_code == 429
+        costs = client.get("/api/admin/costs?range=all", headers=ADMIN).json()
+    assert costs["questions"] == 2  # the question and its follow-up in the same chat

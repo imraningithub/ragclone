@@ -273,3 +273,12 @@ settings gear hidden unless URL has `?admin=1`. `done.refused` -> style the mess
 - `GET /api/admin/costs?range=` (admin token, else 403; bad range 400) -> `{range, questions, spend_usd,
   per_question: {mean, median, p95 (nearest rank)}, unknown_cost_questions, pricing: {as_of, source, currency,
   estimated}}`. `GET /admin/costs` serves `web/admin.html` (no data; token in sessionStorage `dtm_admin_token`).
+- Outcomes (#4): `costs.ANSWERED` (stored as reason NULL), `no_context` / `no_answer` / `uncited`, `costs.ABORTED`
+  (stream closed before the answer completed) and `costs.ERROR` (a model call failed, before or during streaming;
+  calls already billed are kept, a failed call is not). KB chat writes the record exactly once via one helper; the
+  response streams through `main._closing`, which closes the sync generator when the response ends early. When
+  the answer's usage never arrived, the answer call is estimated (~4 chars/token of prompt and generated text,
+  `estimated: true`). Under uvicorn a disconnect is not noticed (the cookie middleware does not listen for it and
+  uvicorn drops writes), so the answer completes and is recorded as answered with exact usage. 400/429 requests
+  record nothing. Summary adds `estimated_questions` and `by_reason: [{reason, questions, spend_usd}]`
+  (answered first).

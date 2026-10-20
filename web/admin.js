@@ -49,12 +49,46 @@ function render(d) {
   $("p95").textContent = usd(pq.p95);
   $("spend").textContent = usd(d.spend_usd);
   $("questions").textContent = String(d.questions ?? "–");
+  renderReasons(d.by_reason || [], d.spend_usd || 0);
+  const est = d.estimated_questions || 0;
+  $("estimated").hidden = !est;
+  $("estimated").textContent = est
+    ? `${est} question(s) include estimated tokens (the answer stream was cut before OpenAI reported usage).` : "";
   const unknown = d.unknown_cost_questions || 0;
   $("unknown").hidden = !unknown;
   $("unknown").textContent = unknown
     ? `${unknown} question(s) used a model missing from the price table; their cost is incomplete.` : "";
   const p = d.pricing || {};
   $("pricing").textContent = `Estimated from token counts, ${p.currency || "USD"}. Prices as of ${p.as_of || "?"} (${p.source || "?"}).`;
+}
+
+const REASONS = {
+  answered: ["Answered", "grounded answer with sources"],
+  no_context: ["Refused: nothing relevant found", "planner + search only, no answer call"],
+  no_answer: ["Refused by the model", "off-topic, injection or not in the documents"],
+  uncited: ["Refused: answer without sources", "the model answered but cited nothing"],
+  aborted: ["Aborted", "the answer stream was cut mid-way"],
+  error: ["Failed", "a model call failed"],
+};
+
+function renderReasons(rows, total) {
+  const body = $("reasons").tBodies[0];
+  body.replaceChildren(...rows.map((r) => {
+    const [label, hint] = REASONS[r.reason] || [r.reason, ""];
+    const tr = document.createElement("tr");
+    const name = document.createElement("td");
+    name.append(label);
+    if (hint) { const h = document.createElement("div"); h.className = "hint"; h.textContent = hint; name.append(h); }
+    const cells = [String(r.questions), usd(r.spend_usd), total ? `${Math.round((r.spend_usd / total) * 100)}%` : "–"]
+      .map((text) => { const td = document.createElement("td"); td.className = "num"; td.textContent = text; return td; });
+    tr.append(name, ...cells);
+    return tr;
+  }));
+  if (!rows.length) {
+    const tr = document.createElement("tr"), td = document.createElement("td");
+    td.colSpan = 4; td.className = "hint"; td.textContent = "No questions in this range.";
+    tr.append(td); body.append(tr);
+  }
 }
 
 function showError(msg) { $("error").textContent = msg; $("error").hidden = false; }

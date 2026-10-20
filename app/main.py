@@ -13,16 +13,19 @@ import threading
 import uuid
 from dataclasses import asdict
 from pathlib import Path
-from typing import Callable, Iterator
+from typing import AsyncIterator, Callable, Iterator
+
+import anyio
 
 from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import iterate_in_threadpool
 
 from . import costs, guardrails, rag, retrieval
 from .config import ROOT, RagSettings, Settings, get_settings, load_rag_settings, save_rag_settings
 from .parsing import SUPPORTED_EXTENSIONS, ParseError, UnsupportedFileType
-from .providers import Provider, get_provider
+from .providers import Provider, approx_tokens, get_provider
 from .store import DimensionMismatch, DuplicateFile, NotFound, VectorStore
 from .threads import ThreadStore
 
@@ -85,6 +88,24 @@ def _make_title(message: str) -> str:
 def _provider_error(e: Exception) -> HTTPException:
     status = getattr(e, "status_code", None)
     return HTTPException(502, f"Model provider error{f' ({status})' if status else ''}: {e.__class__.__name__}")
+
+
+async def _closing(gen: Iterator[str]) -> AsyncIterator[str]:
+    """Stream a sync generator from the thread pool and always close it when the response ends early.
+
+    Starlette alone would just drop a half-consumed sync generator (it is closed whenever it is garbage
+    collected); closing it here runs its cleanup (the cost record) deterministically when a client
+    disconnect cancels the response or a write to the socket fails.
+    """
+    try:
+        async for chunk in iterate_in_threadpool(gen):
+            yield chunk
+    finally:
+        with anyio.CancelScope(shield=True):
+            try:
+                await anyio.to_thread.run_sync(gen.close)
+            except ValueError:  # still running in a worker thread; its own finally will run when it stops
+                pass
 
 
 def create_app(settings: Settings | None = None, provider: Provider | None = None,
@@ -329,6 +350,34 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
             timing[key] = round(time.perf_counter() - t0, 3)
 
         meter = costs.UsageMeter()  # this question's paid calls; never shared between requests
+        plan: dict = {}
+        hits: list[dict] = []
+        messages: list[dict] = []
+        tokens: Iterator[str] | None = None  # set once the answer stream is running
+        gate: guardrails.StreamGate | None = None
+        recorded = False
+
+        def record_cost(reason: str | None, answer: str | None = None) -> None:
+            """Write this question's cost record exactly once, however the request ends."""
+            nonlocal recorded
+            if recorded:
+                return
+            recorded = True
+            if tokens is not None and not any(c["step"] == "answer" for c in meter.calls):
+                # The answer call ran but OpenAI's usage never arrived (stream cut): estimate it.
+                meter.step("answer")(settings.kb_chat_model,
+                                     sum(approx_tokens(str(m.get("content") or "")) for m in messages), 0,
+                                     approx_tokens(gate.raw if gate else ""), estimated=True)
+            mark("total_s")
+            cost_store.record_question(meter, visitor=owner(request), reason=reason, question=question,
+                                       timing=timing)
+            guardrails.log_event(settings.kb_log_path, {
+                "ts": time.time(), "thread_id": thread_id, "question": question, "plan": plan,
+                "hits": [{"file": h.get("file_name"), "page": (h.get("meta") or {}).get("page"),
+                          "score": h.get("score")} for h in hits],
+                "reason": reason, "answer": answer, "timing": timing,
+                "usage": meter.calls, "cost_usd": meter.total_usd})
+
         try:
             plan = retrieval.plan_query(provider, history, question, model=settings.kb_plan_model,
                                         usage=meter.step("planner"))
@@ -338,22 +387,31 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
                                       threshold=settings.kb_threshold, usage=meter.step("embeddings"))
             mark("retrieve_s")
         except Exception as e:
+            record_cost(costs.ERROR)  # the planner may already have been billed
             raise _provider_error(e)
         language = plan.get("language") or retrieval.guess_language(question)
-        tokens: Iterator[str] | None = None
         candidates: list[dict] = []
         if hits:
             messages, candidates = guardrails.build_kb_messages(question=question, plan=plan, hits=hits,
                                                                 history=history)
             try:
                 # Wait for the first chunk here so a provider failure is still a 502, not a broken stream.
-                tokens = iter(provider.chat_stream(messages, temperature=settings.chat_temperature,
-                                                   model=settings.kb_chat_model, usage=meter.step("answer")))
-                tokens = itertools.chain([next(tokens, "")], tokens)
+                answer_iter = iter(provider.chat_stream(messages, temperature=settings.chat_temperature,
+                                                        model=settings.kb_chat_model,
+                                                        usage=meter.step("answer")))
+                tokens = itertools.chain([next(answer_iter, "")], answer_iter)
             except Exception as e:
+                record_cost(costs.ERROR)  # a failed call is not billed; planner and embeddings were
                 raise _provider_error(e)
+        gate = guardrails.StreamGate(len(candidates), language)
 
         def stream() -> Iterator[str]:
+            try:
+                yield from answer_stream()
+            finally:
+                record_cost(costs.ABORTED)  # no-op when the answer already completed
+
+        def answer_stream() -> Iterator[str]:
             if tokens is None:
                 # Nothing relevant in the knowledge base: refuse without calling the chat model.
                 answer = guardrails.refusal_text(language, settings.refusal_contact)
@@ -362,13 +420,13 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
                 for piece in _word_groups(answer):
                     yield _sse("token", {"text": piece})
             else:
-                gate = guardrails.StreamGate(len(candidates), language)
                 try:
                     for token in tokens:
                         if out := gate.feed(token):
                             timing.setdefault("first_token_s", round(time.perf_counter() - t0, 3))
                             yield _sse("token", {"text": out})
                 except Exception as e:
+                    record_cost(costs.ERROR)
                     yield _sse("error", {"detail": _provider_error(e).detail})
                     return
                 if out := gate.flush():
@@ -391,18 +449,10 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
                 title = _make_title(question)
                 state.threads.rename(thread_id, title)
             saved = state.threads.add_message(thread_id, "assistant", answer, citations or None)
-            mark("total_s")
-            cost_store.record_question(meter, visitor=owner(request), reason=reason, question=question,
-                                       timing=timing)
-            guardrails.log_event(settings.kb_log_path, {
-                "ts": time.time(), "thread_id": thread_id, "question": question, "plan": plan,
-                "hits": [{"file": h.get("file_name"), "page": (h.get("meta") or {}).get("page"),
-                          "score": h.get("score")} for h in hits],
-                "reason": reason, "answer": answer, "timing": timing,
-                "usage": meter.calls, "cost_usd": meter.total_usd})
+            record_cost(reason, answer)
             yield _sse("done", {"message_id": saved["id"], "title": title, "refused": reason})
 
-        return StreamingResponse(stream(), media_type="text/event-stream", headers=SSE_HEADERS)
+        return StreamingResponse(_closing(stream()), media_type="text/event-stream", headers=SSE_HEADERS)
 
     @app.post("/api/threads/{thread_id}/chat")
     def chat(thread_id: str, request: Request, data: dict = Body(...)):

@@ -177,9 +177,12 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
     def get_rag_settings():
         return asdict(state.rag)
 
-    def require_admin(request: Request) -> None:
+    def is_admin(request: Request) -> bool:
         given = request.headers.get("X-Admin-Token") or ""
-        if not settings.admin_token or not hmac.compare_digest(given.encode(), settings.admin_token.encode()):
+        return bool(settings.admin_token) and hmac.compare_digest(given.encode(), settings.admin_token.encode())
+
+    def require_admin(request: Request) -> None:
+        if not is_admin(request):
             raise HTTPException(403, "Admin token required")
 
     @app.put("/api/settings")
@@ -326,10 +329,10 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
             return FileResponse(WEB_DIR / "admin.html")
 
         @app.get("/api/admin/costs")
-        def admin_costs(request: Request, range: str = "today"):
+        def admin_costs(request: Request, range: str = "today", include_test: bool = False):
             require_admin(request)
             try:
-                return cost_store.summary(range)
+                return cost_store.summary(range, include_test=include_test)
             except ValueError as e:
                 raise HTTPException(400, str(e))
 
@@ -352,6 +355,9 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
             timing[key] = round(time.perf_counter() - t0, 3)
 
         meter = costs.UsageMeter(pricing)  # this question's paid calls; never shared between requests
+        # Benchmarks and manual tests tag themselves; the tag only counts with the admin token, so students
+        # cannot hide their own traffic. A missing or wrong token never blocks the question itself.
+        test_traffic = request.headers.get("X-Traffic", "").lower() == "test" and is_admin(request)
         plan: dict = {}
         hits: list[dict] = []
         messages: list[dict] = []
@@ -372,7 +378,7 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
                                      approx_tokens(gate.raw if gate else ""), estimated=True)
             mark("total_s")
             cost_store.record_question(meter, visitor=owner(request), reason=reason, question=question,
-                                       timing=timing)
+                                       timing=timing, test=test_traffic)
             guardrails.log_event(settings.kb_log_path, {
                 "ts": time.time(), "thread_id": thread_id, "question": question, "plan": plan,
                 "hits": [{"file": h.get("file_name"), "page": (h.get("meta") or {}).get("page"),

@@ -24,16 +24,30 @@ function usd(v) {
 }
 
 let range = "today";
-try { range = new URLSearchParams(location.search).get("range") || range; } catch { /* ignore */ }
+let includeTest = false;
+try {
+  const params = new URLSearchParams(location.search);
+  range = params.get("range") || range;
+  includeTest = ["1", "true"].includes(params.get("include_test"));
+} catch { /* ignore */ }
+
+// Keep the range and the test-traffic toggle in the URL so a reload or a shared link keeps the view.
+function syncUrl() {
+  const q = new URLSearchParams({ range });
+  if (includeTest) q.set("include_test", "1");
+  try { history.replaceState(null, "", `?${q}`); } catch { /* ignore */ }
+}
 
 async function load(retry = true) {
   $("error").hidden = true;
   document.querySelectorAll("[data-range]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.range === range)));
+  $("include-test").checked = includeTest;
   const tok = getAdminToken(true);
   if (!tok) { showError("Admin token required."); return; }
+  const testParam = includeTest ? "&include_test=true" : "";
   let res;
   try {
-    res = await fetch(`/api/admin/costs?range=${encodeURIComponent(range)}`, { headers: { "X-Admin-Token": tok } });
+    res = await fetch(`/api/admin/costs?range=${encodeURIComponent(range)}${testParam}`, { headers: { "X-Admin-Token": tok } });
   } catch (e) { showError(`Could not load costs: ${e.message}`); return; }
   if (res.status === 403) {
     clearAdminToken();
@@ -79,6 +93,12 @@ function render(d) {
   $("unknown").hidden = !unknown;
   $("unknown").textContent = unknown
     ? `${unknown} question(s) used a model missing from the price table; their cost is incomplete.` : "";
+  const testQuestions = d.test_questions || 0;
+  $("test-note").hidden = !testQuestions;
+  $("test-note").textContent = !testQuestions ? ""
+    : includeTest
+      ? `Includes ${testQuestions} test question(s).`
+      : `${testQuestions} test question(s) hidden. Tick “Include test traffic” to show them.`;
   const p = d.pricing || {};
   $("pricing-error").hidden = !p.override_error;
   $("pricing-error").textContent = p.override_error
@@ -281,7 +301,12 @@ function showError(msg) { $("error").textContent = msg; $("error").hidden = fals
 
 document.querySelectorAll("[data-range]").forEach((b) => b.addEventListener("click", () => {
   range = b.dataset.range;
-  try { history.replaceState(null, "", `?range=${range}`); } catch { /* ignore */ }
+  syncUrl();
   load();
 }));
+$("include-test").addEventListener("change", (e) => {
+  includeTest = e.target.checked;
+  syncUrl();
+  load();
+});
 load();

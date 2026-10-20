@@ -19,6 +19,8 @@
     .costs-head h1 { font-size: 1.3rem; margin: 0; }
     .ranges { display: flex; flex-wrap: wrap; gap: 6px; }
     .ranges .btn[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
+    .test-toggle { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--muted); font-size: .85rem; cursor: pointer; }
+    .test-toggle input { margin: 0; }
     .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 20px 0 8px; }
     .tile { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 14px 16px; }
     .tile .label { color: var(--muted); font-size: .85rem; }
@@ -65,6 +67,7 @@
         <button class="btn" type="button" data-range="semester">Semester</button>
         <button class="btn" type="button" data-range="all">All</button>
       </div>
+      <label class="test-toggle"><input type="checkbox" id="include-test"> Include test traffic</label>
     </div>
     <section class="tiles" aria-live="polite">
       <div class="tile lead"><div class="label">Mean per question</div><div class="value" id="mean">–</div></div>
@@ -114,6 +117,7 @@
     <p class="hint" id="visitors-hint">Visitors are anonymous browser ids; they cannot be linked to a student.</p>
     <p class="note warn" id="unknown" hidden></p>
     <p class="note" id="estimated" hidden></p>
+    <p class="note" id="test-note" hidden></p>
     <p class="note warn" id="pricing-error" hidden></p>
     <p class="note" id="pricing"></p>
     <p class="note" id="retention" hidden></p>

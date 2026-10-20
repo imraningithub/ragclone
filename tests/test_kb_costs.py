@@ -528,3 +528,45 @@ def test_question_text_purged_on_app_start(tmp_path):
     now["t"] = 31 * DAY
     with TestClient(create_app(settings, UsageProvider(), clock=lambda: now["t"])) as restarted:
         assert list(_texts(restarted).values()) == [None]  # gone before any new question arrives
+
+
+# -- #7: test traffic -----------------------------------------------------------------------------------------
+
+def _ask_with(client, headers):
+    tid = client.post("/api/threads", json={}).json()["id"]
+    r = client.post(f"/api/threads/{tid}/chat", json={"message": Q}, headers=headers)
+    assert r.status_code == 200  # a wrong or missing admin token never blocks the student's question
+    return r
+
+
+def test_test_traffic_needs_the_admin_token_and_is_hidden_by_default(tmp_path):
+    client, _ = _client(tmp_path)
+    with client:
+        _ask_with(client, {"X-Traffic": "test", **ADMIN})                          # tagged
+        _ask_with(client, {"X-Traffic": "test", "X-Admin-Token": "wrong"})         # header ignored
+        _ask_with(client, {"X-Traffic": "test"})                                   # header ignored
+        default = client.get("/api/admin/costs?range=all", headers=ADMIN).json()
+        included = client.get("/api/admin/costs?range=all&include_test=true", headers=ADMIN).json()
+    assert (default["questions"], default["include_test"], default["test_questions"]) == (2, False, 1)
+    assert (included["questions"], included["include_test"], included["test_questions"]) == (3, True, 1)
+    assert default["spend_usd"] == pytest.approx(2 * 0.00463)
+    assert included["spend_usd"] == pytest.approx(3 * 0.00463)
+    assert sum(v["questions"] for v in default["top_visitors"]) == 2  # every view excludes it, not just totals
+
+
+def test_cost_db_from_before_test_traffic_is_migrated(tmp_path):
+    import sqlite3
+
+    settings = _settings(tmp_path)
+    _seed(settings)
+    conn = sqlite3.connect(settings.kb_costs_db_path)  # the #2-#6 schema, without the test column
+    conn.executescript("""
+        CREATE TABLE questions (id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, visitor TEXT, reason TEXT,
+            question TEXT, timing TEXT NOT NULL DEFAULT '{}', total_usd REAL NOT NULL DEFAULT 0,
+            estimated INTEGER NOT NULL DEFAULT 0, unknown INTEGER NOT NULL DEFAULT 0);
+        INSERT INTO questions (ts, total_usd) VALUES (strftime('%s', 'now'), 0.01);""")
+    conn.close()
+    with TestClient(create_app(settings, UsageProvider())) as client:
+        _ask_with(client, {"X-Traffic": "test", **ADMIN})
+        costs = client.get("/api/admin/costs?range=all", headers=ADMIN).json()
+    assert (costs["questions"], costs["test_questions"]) == (1, 1)  # the old row counts as real traffic

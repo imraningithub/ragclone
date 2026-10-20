@@ -115,7 +115,8 @@ CREATE TABLE IF NOT EXISTS questions (
     timing TEXT NOT NULL DEFAULT '{}',
     total_usd REAL NOT NULL DEFAULT 0,
     estimated INTEGER NOT NULL DEFAULT 0,
-    unknown INTEGER NOT NULL DEFAULT 0
+    unknown INTEGER NOT NULL DEFAULT 0,
+    test INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_questions_ts ON questions(ts);
 CREATE TABLE IF NOT EXISTS calls (
@@ -228,6 +229,9 @@ class CostStore:
         with self._lock:
             self._conn.execute("PRAGMA foreign_keys = ON")
             self._conn.executescript(_SCHEMA)
+            # Cost databases from before test-traffic tagging: their rows count as real traffic.
+            if "test" not in {r["name"] for r in self._conn.execute("PRAGMA table_info(questions)")}:
+                self._conn.execute("ALTER TABLE questions ADD COLUMN test INTEGER NOT NULL DEFAULT 0")
             self._conn.commit()
         self._last_purge: float | None = None
         self.purge_question_text()  # on app start; afterwards at most once a day, see record_question
@@ -243,17 +247,17 @@ class CostStore:
         return cur.rowcount
 
     def record_question(self, meter: UsageMeter, *, visitor: str | None, reason: str | None,
-                        question: str, timing: dict | None = None) -> int:
+                        question: str, timing: dict | None = None, test: bool = False) -> int:
         now = self._clock()
         # No cron job: an incoming question triggers the purge, at most once a day.
         if self._last_purge is None or now - self._last_purge >= DAY_SECONDS:
             self.purge_question_text()
         with self._lock:
             cur = self._conn.execute(
-                "INSERT INTO questions (ts, visitor, reason, question, timing, total_usd, estimated, unknown) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO questions (ts, visitor, reason, question, timing, total_usd, estimated, unknown, test) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (now, visitor, reason, question, json.dumps(timing or {}), meter.total_usd,
-                 int(any(c["estimated"] for c in meter.calls)), int(meter.unknown)))
+                 int(any(c["estimated"] for c in meter.calls)), int(meter.unknown), int(test)))
             qid = cur.lastrowid
             self._conn.executemany(
                 "INSERT INTO calls (question_id, ts, step, model, input, cached, output, usd, estimated) "
@@ -263,19 +267,23 @@ class CostStore:
             self._conn.commit()
         return qid
 
-    def summary(self, range_name: str) -> dict:
+    def summary(self, range_name: str, include_test: bool = False) -> dict:
         if range_name not in RANGES:
             raise ValueError(f"range must be one of {', '.join(RANGES)}")
         now = self._clock()
         start = range_start(range_name, now, self._semester_start)
-        where, args = ("WHERE ts >= ?", (start,)) if start is not None else ("", ())
+        in_range, args = ("ts >= ?", (start,)) if start is not None else ("1 = 1", ())
+        where = f"WHERE {in_range}" + ("" if include_test else " AND test = 0")
         with self._lock:
+            test_questions = self._conn.execute(
+                f"SELECT COUNT(*) FROM questions WHERE {in_range} AND test = 1", args).fetchone()[0]
             rows = self._conn.execute(
                 f"SELECT id, ts, visitor, question, total_usd, unknown, estimated, reason FROM questions {where}",
                 args).fetchall()
             calls = self._conn.execute(
                 "SELECT c.question_id, q.ts, c.step, c.model, c.input, c.cached, c.output, c.usd FROM calls c "
-                f"JOIN questions q ON q.id = c.question_id {where.replace('ts', 'q.ts')}", args).fetchall()
+                f"JOIN questions q ON q.id = c.question_id {where.replace('ts', 'q.ts').replace('test', 'q.test')}",
+                args).fetchall()
         first_day = _berlin_day(start if start is not None else min((r["ts"] for r in rows), default=now))
         chat = [c for c in calls if c["step"] in CHAT_STEPS]
         chat_input, chat_cached = sum(c["input"] for c in chat), sum(c["cached"] for c in chat)
@@ -288,6 +296,8 @@ class CostStore:
             entry["spend_usd"] += r["total_usd"]
         return {
             "range": range_name,
+            "include_test": include_test,
+            "test_questions": test_questions,
             "questions": len(costs),
             "spend_usd": sum(costs),
             "per_question": {"mean": statistics.fmean(costs) if costs else None,

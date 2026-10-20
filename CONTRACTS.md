@@ -296,3 +296,9 @@ settings gear hidden unless URL has `?admin=1`. `done.refused` -> style the mess
   `top_visitors` (max 10: `{visitor` = first 8 chars of the stored cookie hash, `questions, spend_usd}`) and
   `retention_days` (30). `CostStore.purge_question_text()` sets question text older than 30 days to NULL (rows,
   tokens and cost stay); it runs when the store opens (app start) and from `record_question` at most once a day.
+- Test traffic (#7): a chat request with `X-Traffic: test` and a valid `X-Admin-Token` is stored with
+  `questions.test = 1` (column added to older cost DBs at startup; old rows count as real traffic). The header
+  without a valid token is ignored and never blocks the question. `GET /api/admin/costs?include_test=false`
+  (default) excludes test questions from every figure; the response adds `include_test` and `test_questions`
+  (test questions in the range, counted either way). The dashboard has an "Include test traffic" toggle
+  (`?include_test=1` in the URL).

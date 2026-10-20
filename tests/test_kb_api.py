@@ -25,19 +25,19 @@ class CountingProvider(FakeProvider):
         self.models = {}
         self.answer = answer  # fixed answer text to stream instead of the fake one
 
-    def complete(self, messages, *, json_mode=False, temperature=None, model=None):
+    def complete(self, messages, *, json_mode=False, temperature=None, model=None, usage=None):
         if json_mode:
             self.plan_calls += 1
             self.models["plan"] = model
-        return super().complete(messages, json_mode=json_mode, temperature=temperature)
+        return super().complete(messages, json_mode=json_mode, temperature=temperature, model=model, usage=usage)
 
-    def chat_stream(self, messages, temperature=None, model=None):
+    def chat_stream(self, messages, temperature=None, model=None, usage=None):
         self.answer_calls += 1
         self.models["answer"] = model
         if self.answer is not None:
             yield from re.findall(r"\s*\S+", self.answer)
             return
-        yield from super().chat_stream(messages, temperature=temperature, model=model)
+        yield from super().chat_stream(messages, temperature=temperature, model=model, usage=usage)
 
 
 def _settings(tmp_path, **kw):

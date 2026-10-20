@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Costs · DTM Studienassistent</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <style>
+    :root { --chart-answer: #2563eb; --chart-planner: #d97706; --chart-embeddings: #7c3aed; }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) { --chart-answer: #60a5fa; --chart-planner: #fbbf24; --chart-embeddings: #a78bfa; }
+    }
+    :root[data-theme="dark"] { --chart-answer: #60a5fa; --chart-planner: #fbbf24; --chart-embeddings: #a78bfa; }
+
+    body { background: var(--bg); color: var(--text); }
+    .costs { max-width: 960px; margin: 0 auto; padding: 24px 16px 48px; }
+    .costs-head { display: flex; flex-wrap: wrap; gap: 12px; align-items: baseline; justify-content: space-between; }
+    .costs-head h1 { font-size: 1.3rem; margin: 0; }
+    .ranges { display: flex; flex-wrap: wrap; gap: 6px; }
+    .ranges .btn[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
+    .test-toggle { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--muted); font-size: .85rem; cursor: pointer; }
+    .test-toggle input { margin: 0; }
+    .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 20px 0 8px; }
+    .tile { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 14px 16px; }
+    .tile .label { color: var(--muted); font-size: .85rem; }
+    .tile .value { font-size: 1.6rem; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 4px; }
+    .tile .sub { color: var(--muted); font-size: .82rem; margin-top: 4px; }
+    .tile.lead { border-color: var(--accent); }
+    .note { color: var(--muted); font-size: .85rem; margin-top: 12px; }
+    .warn { color: var(--danger); }
+    .error { color: var(--danger); margin-top: 16px; }
+    .section-title { font-size: 1rem; margin: 28px 0 8px; }
+    .table-wrap { overflow-x: auto; margin-top: 8px; }
+    table.data { width: 100%; border-collapse: collapse; font-size: .92rem; }
+    table.data th, table.data td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+    table.data th { color: var(--muted); font-weight: 500; }
+    table.data .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    table.data .hint { color: var(--muted); font-size: .82rem; }
+
+    .legend { display: flex; flex-wrap: wrap; gap: 12px; color: var(--muted); font-size: .85rem; margin: 8px 0 4px; }
+    .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+    .sw-answer, .seg-answer { background: var(--chart-answer); }
+    .sw-planner, .seg-planner { background: var(--chart-planner); }
+    .sw-embeddings, .seg-embeddings { background: var(--chart-embeddings); }
+    .daily-svg { display: block; width: 100%; height: auto; stroke: none; }  /* styles.css strokes icon svgs */
+    .daily-svg * { stroke: none; }
+    .daily-svg .seg-answer { fill: var(--chart-answer); }
+    .daily-svg .seg-planner { fill: var(--chart-planner); }
+    .daily-svg .seg-embeddings { fill: var(--chart-embeddings); }
+    .daily-svg .hit { fill: transparent; }
+    .daily-svg .axis { fill: var(--muted); font-size: 9px; }  /* viewBox units: ~13px at desktop width */
+    .daily-svg .axis-line { stroke: var(--border); stroke-width: 1; }
+    table.data .q-text { min-width: 220px; overflow-wrap: anywhere; }
+    table.data .mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .85rem; overflow-wrap: anywhere; }
+    p.hint { color: var(--muted); font-size: .82rem; margin: 8px 0 0; }
+  </style>
+</head>
+<body>
+  <main class="costs">
+    <div class="costs-head">
+      <h1>Costs per student question</h1>
+      <div class="ranges" role="group" aria-label="Range">
+        <button class="btn" type="button" data-range="today">Today</button>
+        <button class="btn" type="button" data-range="7d">7 days</button>
+        <button class="btn" type="button" data-range="30d">30 days</button>
+        <button class="btn" type="button" data-range="semester">Semester</button>
+        <button class="btn" type="button" data-range="all">All</button>
+      </div>
+      <label class="test-toggle"><input type="checkbox" id="include-test"> Include test traffic</label>
+    </div>
+    <section class="tiles" aria-live="polite">
+      <div class="tile lead"><div class="label">Mean per question</div><div class="value" id="mean">–</div></div>
+      <div class="tile"><div class="label">Median per question</div><div class="value" id="median">–</div></div>
+      <div class="tile"><div class="label">p95 per question</div><div class="value" id="p95">–</div></div>
+      <div class="tile"><div class="label">Spend</div><div class="value" id="spend">–</div></div>
+      <div class="tile"><div class="label">Questions</div><div class="value" id="questions">–</div></div>
+      <div class="tile"><div class="label">Cached input</div><div class="value" id="cache">–</div><div class="sub" id="cache-sub"></div></div>
+    </section>
+    <h2 class="section-title">Daily spend by step</h2>
+    <div id="daily"></div>
+    <h2 class="section-title">Answered and refused</h2>
+    <div class="table-wrap">
+      <table class="data" id="reasons">
+        <thead><tr><th scope="col">Outcome</th><th scope="col" class="num">Questions</th><th scope="col" class="num">Spend</th><th scope="col" class="num">Share of spend</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <h2 class="section-title">By step</h2>
+    <div class="table-wrap">
+      <table class="data" id="steps">
+        <thead><tr><th scope="col">Step</th><th scope="col" class="num">Calls</th><th scope="col" class="num">Input tokens</th><th scope="col" class="num">Cached</th><th scope="col" class="num">Output tokens</th><th scope="col" class="num">Spend</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <h2 class="section-title">By model</h2>
+    <div class="table-wrap">
+      <table class="data" id="models">
+        <thead><tr><th scope="col">Model</th><th scope="col" class="num">Calls</th><th scope="col" class="num">Input tokens</th><th scope="col" class="num">Cached</th><th scope="col" class="num">Output tokens</th><th scope="col" class="num">Spend</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <h2 class="section-title">Indexing (one-time)</h2>
+    <p class="note" id="indexing"></p>
+    <h2 class="section-title">Most expensive questions</h2>
+    <div class="table-wrap">
+      <table class="data" id="top-questions">
+        <thead><tr><th scope="col">Question</th><th scope="col">Asked</th><th scope="col">Outcome</th><th scope="col" class="num">Tokens in / cached / out</th><th scope="col" class="num">Answer</th><th scope="col" class="num">Planner</th><th scope="col" class="num">Embeddings</th><th scope="col" class="num">Total</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <h2 class="section-title">Top visitors by spend</h2>
+    <div class="table-wrap">
+      <table class="data" id="visitors">
+        <thead><tr><th scope="col">Visitor</th><th scope="col" class="num">Questions</th><th scope="col" class="num">Spend</th><th scope="col" class="num">Share of spend</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p class="hint" id="visitors-hint">Visitors are anonymous browser ids; they cannot be linked to a student.</p>
+    <p class="note warn" id="unknown" hidden></p>
+    <p class="note" id="estimated" hidden></p>
+    <p class="note" id="test-note" hidden></p>
+    <p class="note warn" id="pricing-error" hidden></p>
+    <p class="note" id="pricing"></p>
+    <p class="note" id="retention" hidden></p>
+    <p class="error" id="error" role="alert" hidden></p>
+  </main>
+  <script src="/static/admin.js"></script>
+</body>
+</html>

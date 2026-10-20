@@ -256,3 +256,59 @@ settings gear hidden unless URL has `?admin=1`. `done.refused` -> style the mess
   `ThreadStore.create(title, owner=None)`, `list(owner=None)`, `get(id, owner=None)`; with an owner, other owners'
   threads raise KeyError (-> 404 for get/patch/delete/files/chat). `threads.owner` column is added to old DBs; their
   threads keep owner NULL. Chat mode passes no owner (unscoped, no cookie).
+
+## KB mode — cost tracking (spec: imraningithub/ragclone#1)
+- `app/costs.py`: `PRICES` (USD per 1M tokens: input, cached input, output; `PRICES_AS_OF`, `PRICES_SOURCE`, from
+  `docs/research/openai-pricing.md`), `call_cost(model, input, cached, output) -> float | None` (None = model not in
+  the table, never 0), `UsageMeter` (one per question; `step(name)` returns the recorder passed to a provider as
+  `usage`; `calls`, `total_usd`, `unknown`), `CostStore(db_path, clock)` (`data/kb_costs.db`: `questions` and `calls`
+  tables; `record_question(meter, visitor, reason, question, timing)`, `summary(range)` with range
+  today/7d/30d/all in Europe/Berlin calendar days).
+- Providers: `complete(..., usage=None)`, `chat_stream(..., usage=None)`, `embed(texts, usage=None)`; when given,
+  `usage(model, input_tokens, cached_tokens, output_tokens)` is called once per API call (stream: after the last
+  token). FakeProvider reports `plan_usage` / `answer_usage` / `embed_tokens` when set, else ~4 chars per token.
+  `retrieval.plan_query(..., usage=None)` and `retrieve(..., usage=None)` pass it on only when given.
+- `create_app(settings, provider, clock=time.time)`. KB chat records steps planner / embeddings / answer and writes
+  one cost record when the answer is complete; the `kb_log.jsonl` line adds `usage` (the calls) and `cost_usd`.
+- `GET /api/admin/costs?range=` (admin token, else 403; bad range 400) -> `{range, questions, spend_usd,
+  per_question: {mean, median, p95 (nearest rank)}, unknown_cost_questions, pricing: {as_of, source, currency,
+  estimated}}`. `GET /admin/costs` serves `web/admin.html` (no data; token in sessionStorage `dtm_admin_token`).
+- Outcomes (#4): `costs.ANSWERED` (stored as reason NULL), `no_context` / `no_answer` / `uncited`, `costs.ABORTED`
+  (stream closed before the answer completed) and `costs.ERROR` (a model call failed, before or during streaming;
+  calls already billed are kept, a failed call is not). KB chat writes the record exactly once via one helper; the
+  response streams through `main._closing`, which closes the sync generator when the response ends early. When
+  the answer's usage never arrived, the answer call is estimated (~4 chars/token of prompt and generated text,
+  `estimated: true`). Under uvicorn a disconnect is not noticed (the cookie middleware does not listen for it and
+  uvicorn drops writes), so the answer completes and is recorded as answered with exact usage. 400/429 requests
+  record nothing. Summary adds `estimated_questions` and `by_reason: [{reason, questions, spend_usd}]`
+  (answered first).
+- Breakdown (#5): settings `semester_start` (`SEMESTER_START`, ISO date, Europe/Berlin) enables range `semester`
+  (400 when unset). `costs.Pricing(path)`: built-in `PRICES` merged with optional `data/pricing.json`
+  `{"as_of", "source", "models": {"<model>": {"input", "cached_input"?, "output"?}}}` (USD per 1M tokens), read at
+  startup; a broken file keeps the built-in prices and sets `override_error`. Costs are priced when recorded, so an
+  override changes new questions only. `UsageMeter(pricing)`, `CostStore(..., semester_start, pricing)`. Summary
+  adds `by_step` / `by_model` (`calls, input, cached, output, spend_usd`, most expensive first), `daily`
+  (`[{date, planner, embeddings, answer, total}]` per Berlin day in the range, zeros included, oldest first),
+  `cache` (`{input, cached, share}` over planner + answer calls; embeddings can't be cached) and
+  `pricing.override_error`.
+- Top lists and retention (#6): summary adds `top_questions` (max 10, most expensive first: `{id, asked_at`
+  (Europe/Berlin ISO), `question` (None once purged), `reason, spend_usd, input, cached, output, steps: {step: usd}}`),
+  `top_visitors` (max 10: `{visitor` = first 8 chars of the stored cookie hash, `questions, spend_usd}`) and
+  `retention_days` (30). `CostStore.purge_question_text()` sets question text older than 30 days to NULL (rows,
+  tokens and cost stay); it runs when the store opens (app start) and from `record_question` at most once a day.
+- Test traffic (#7): a chat request with `X-Traffic: test` and a valid `X-Admin-Token` is stored with
+  `questions.test = 1` (column added to older cost DBs at startup; old rows count as real traffic). The header
+  without a valid token is ignored and never blocks the question. `GET /api/admin/costs?include_test=false`
+  (default) excludes test questions from every figure; the response adds `include_test` and `test_questions`
+  (test questions in the range, counted either way). The dashboard has an "Include test traffic" toggle
+  (`?include_test=1` in the URL).
+- Indexing cost (#8): `rag.ingest_kb_file(..., usage=None)` passes the recorder to every embedding batch;
+  `scripts/ingest_kb.py` collects them as step `indexing` and stores them with `CostStore.record_indexing(meter)`
+  (calls with `question_id` NULL), printing the run's cost. Unchanged files make no calls and record nothing.
+  Summary adds `indexing: {calls, input, spend_usd}` for runs in the range; it is not part of `spend_usd`,
+  `by_step`, `by_model` or the per-question figures.
+- Scripts (#9): the summary adds `test_spend_usd` (spend of test questions in the range). `scripts/eval_kb.py`
+  prints each item's cost with `--show` and a run line (total, mean per question, answered mean, answer-step
+  share) from the `cost_usd` / `usage` of the log records. `scripts/bench_kb.py --admin-token T` (or
+  `ADMIN_TOKEN`) tags its requests as test traffic and prints the run's cost from the difference in
+  `test_questions` / `test_spend_usd` before and after; without a token it says cost was not measured.

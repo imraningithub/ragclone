@@ -87,5 +87,8 @@ student shares the proxy's IP for rate limiting and the cookie is not marked `Se
 .venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips="<proxy IP>"
 ```
 (`--forwarded-allow-ips="*"` only if the app port is not reachable except through the proxy.) The rate limiters are
-in memory, per process: with `--workers N` each worker counts separately. `kb_log.jsonl` records every question
+in memory, per process: with `--workers N` each worker counts separately. Estimated OpenAI cost per question
+(tokens x prices in `app/costs.py`) is recorded in `data/kb_costs.db`; open `/admin/costs` with the admin token to
+see cost per question and spend. Prices can be
+overridden without a code change in `data/pricing.json` (format in CONTRACTS.md; applies to new questions). `kb_log.jsonl` records every question
 and answer for quality review; tell students so, and delete it regularly.

@@ -1,4 +1,4 @@
-"""End-to-end eval of the DTM Studienassistent (KB mode) through the real HTTP API.
+"""End-to-end eval of the DTM Studienassistent (KB mode) through the real HTTP API, with per-question cost.
 
 Copies the KB index (data/rag.db) into a temp dir, runs every item of kb/dtm_eval.json through
 POST /api/threads/{id}/chat with the real provider, and reports retrieval hits (from the KB log),
@@ -74,7 +74,8 @@ def main() -> None:
                 r = client.post(f"/api/threads/{tid}/chat", json={"message": item["q"]})
                 elapsed = time.perf_counter() - t0
                 if r.status_code != 200:
-                    results.append({**item, "status": r.status_code, "answer": r.text, "refused": "http"})
+                    results.append({**item, "status": r.status_code, "answer": r.text, "refused": "http",
+                                    "_cost": None, "_answer_cost": None})
                     continue
                 ev = sse_events(r.text)
                 answer = ""
@@ -84,8 +85,11 @@ def main() -> None:
                 cites = next((d for e, d in ev if e == "citations"), []) or []
                 log = [json.loads(line) for line in settings.kb_log_path.read_text("utf-8").splitlines()]
                 hits = log[-1].get("hits", []) if log else []
+                usage = log[-1].get("usage") if log else None
+                answer_cost = sum(c.get("usd") or 0.0 for c in usage if c.get("step") == "answer") if usage is not None else None
                 results.append({**item, "answer": answer, "refused": done.get("refused"), "cites": cites,
                                 "hits": hits, "plan": log[-1].get("plan") if log else None,
+                                "_cost": log[-1].get("cost_usd") if log else None, "_answer_cost": answer_cost,
                                 # TestClient buffers the whole stream; the server logs when the first token left.
                                 "_total": elapsed, "_ttft": (log[-1].get("timing") or {}).get("first_token_s", elapsed)
                                 if log else elapsed})
@@ -123,7 +127,8 @@ def main() -> None:
         if args.show or not res["_ok"]:
             mark = "OK  " if res["_ok"] else "FAIL"
             top = ", ".join(f"{Path(h['file']).name[:18]}:p{h.get('page')}:{h['score']:.2f}" for h in res.get("hits", [])[:4])
-            print(f"[{mark}] {res['id']:<18} refused={res['refused']!s:<10} hit={res.get('_hit', '-')!s:<5} | {res['q']}")
+            cost_txt = f"  cost=${res['_cost']:.5f}" if res.get("_cost") is not None else ""
+            print(f"[{mark}] {res['id']:<18} refused={res['refused']!s:<10} hit={res.get('_hit', '-')!s:<5} | {res['q']}{cost_txt}")
             print(f"        hits: {top or '-'}" + (f"  HTTP {res['status']}" if "status" in res else ""))
             print(f"        answer: {' '.join(res['answer'].split())[:900]}\n")
 
@@ -131,6 +136,17 @@ def main() -> None:
     if answered:
         print(f"latency over {len(answered)} answered items: median total {statistics.median(r['_total'] for r in answered):.1f}s, "
               f"median first token {statistics.median(r['_ttft'] for r in answered):.1f}s")
+    costed = [r for r in results if r.get("_cost") is not None]
+    if costed:
+        spend = sum(r["_cost"] for r in costed)
+        parts = [f"total ${spend:.4f}", f"mean ${statistics.fmean(r['_cost'] for r in costed):.5f} per question"]
+        answered_costs = [r["_cost"] for r in costed if not r["refused"]]
+        if answered_costs:
+            parts.append(f"answered mean ${statistics.fmean(answered_costs):.5f}")
+        answer_spend = [r["_answer_cost"] for r in costed if r["_answer_cost"] is not None]
+        if answer_spend and spend > 0:
+            parts.append(f"answer step {round(sum(answer_spend) / spend * 100)}% of spend")
+        print(f"cost over {len(costed)} questions: " + ", ".join(parts))
     print("summary:")
     for k, (a, n) in score.items():
         print(f"  {k:<36} {a}/{n}" if n else f"  {k:<36} {a}")

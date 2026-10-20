@@ -13,16 +13,19 @@ import threading
 import uuid
 from dataclasses import asdict
 from pathlib import Path
-from typing import Iterator
+from typing import AsyncIterator, Callable, Iterator
+
+import anyio
 
 from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import iterate_in_threadpool
 
-from . import guardrails, rag, retrieval
+from . import costs, guardrails, rag, retrieval
 from .config import ROOT, RagSettings, Settings, get_settings, load_rag_settings, save_rag_settings
 from .parsing import SUPPORTED_EXTENSIONS, ParseError, UnsupportedFileType
-from .providers import Provider, get_provider
+from .providers import Provider, approx_tokens, get_provider
 from .store import DimensionMismatch, DuplicateFile, NotFound, VectorStore
 from .threads import ThreadStore
 
@@ -87,10 +90,32 @@ def _provider_error(e: Exception) -> HTTPException:
     return HTTPException(502, f"Model provider error{f' ({status})' if status else ''}: {e.__class__.__name__}")
 
 
-def create_app(settings: Settings | None = None, provider: Provider | None = None) -> FastAPI:
+async def _closing(gen: Iterator[str]) -> AsyncIterator[str]:
+    """Stream a sync generator from the thread pool and always close it when the response ends early.
+
+    Starlette alone would just drop a half-consumed sync generator (it is closed whenever it is garbage
+    collected); closing it here runs its cleanup (the cost record) deterministically when a client
+    disconnect cancels the response or a write to the socket fails.
+    """
+    try:
+        async for chunk in iterate_in_threadpool(gen):
+            yield chunk
+    finally:
+        with anyio.CancelScope(shield=True):
+            try:
+                await anyio.to_thread.run_sync(gen.close)
+            except ValueError:  # still running in a worker thread; its own finally will run when it stops
+                pass
+
+
+def create_app(settings: Settings | None = None, provider: Provider | None = None,
+               clock: Callable[[], float] = time.time) -> FastAPI:
     settings = settings or get_settings()
     state = AppState(settings, provider)
     kb_mode = settings.app_mode == "kb"
+    pricing = costs.Pricing(settings.data_dir / "pricing.json")  # optional price override, read at startup
+    cost_store = (costs.CostStore(settings.kb_costs_db_path, clock, semester_start=settings.semester_start,
+                                  pricing=pricing) if kb_mode else None)
     limiter = guardrails.RateLimiter(settings.rate_limit_per_min)
     ip_limiter = guardrails.RateLimiter(settings.rate_limit_ip_per_min)
     app = FastAPI(title="DTM Studienassistent" if kb_mode else "Jan RAG clone")
@@ -152,12 +177,18 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
     def get_rag_settings():
         return asdict(state.rag)
 
+    def is_admin(request: Request) -> bool:
+        given = request.headers.get("X-Admin-Token") or ""
+        return bool(settings.admin_token) and hmac.compare_digest(given.encode(), settings.admin_token.encode())
+
+    def require_admin(request: Request) -> None:
+        if not is_admin(request):
+            raise HTTPException(403, "Admin token required")
+
     @app.put("/api/settings")
     def put_rag_settings(request: Request, data: dict = Body(...)):
         if kb_mode:
-            given = request.headers.get("X-Admin-Token") or ""
-            if not settings.admin_token or not hmac.compare_digest(given.encode(), settings.admin_token.encode()):
-                raise HTTPException(403, "Admin token required")
+            require_admin(request)
         try:
             state.rag = state.rag.update(data)
         except (ValueError, TypeError) as e:
@@ -290,6 +321,21 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         # inline so the browser's PDF viewer opens it and honours #page=N
         return FileResponse(path, media_type=media, filename=path.name, content_disposition_type="inline")
 
+    # -- admin: costs ----------------------------------------------------------
+    if kb_mode:
+        @app.get("/admin/costs", include_in_schema=False)
+        def admin_costs_page():
+            # The page holds no data; it asks for the admin token and calls /api/admin/costs.
+            return FileResponse(WEB_DIR / "admin.html")
+
+        @app.get("/api/admin/costs")
+        def admin_costs(request: Request, range: str = "today", include_test: bool = False):
+            require_admin(request)
+            try:
+                return cost_store.summary(range, include_test=include_test)
+            except ValueError as e:
+                raise HTTPException(400, str(e))
+
     # -- chat ----------------------------------------------------------------
     def kb_chat(request: Request, thread_id: str, thread: dict, data: dict) -> StreamingResponse:
         try:
@@ -308,30 +354,72 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         def mark(key: str) -> None:
             timing[key] = round(time.perf_counter() - t0, 3)
 
+        meter = costs.UsageMeter(pricing)  # this question's paid calls; never shared between requests
+        # Benchmarks and manual tests tag themselves; the tag only counts with the admin token, so students
+        # cannot hide their own traffic. A missing or wrong token never blocks the question itself.
+        test_traffic = request.headers.get("X-Traffic", "").lower() == "test" and is_admin(request)
+        plan: dict = {}
+        hits: list[dict] = []
+        messages: list[dict] = []
+        tokens: Iterator[str] | None = None  # set once the answer stream is running
+        gate: guardrails.StreamGate | None = None
+        recorded = False
+
+        def record_cost(reason: str | None, answer: str | None = None) -> None:
+            """Write this question's cost record exactly once, however the request ends."""
+            nonlocal recorded
+            if recorded:
+                return
+            recorded = True
+            if tokens is not None and not any(c["step"] == "answer" for c in meter.calls):
+                # The answer call ran but OpenAI's usage never arrived (stream cut): estimate it.
+                meter.step("answer")(settings.kb_chat_model,
+                                     sum(approx_tokens(str(m.get("content") or "")) for m in messages), 0,
+                                     approx_tokens(gate.raw if gate else ""), estimated=True)
+            mark("total_s")
+            cost_store.record_question(meter, visitor=owner(request), reason=reason, question=question,
+                                       timing=timing, test=test_traffic)
+            guardrails.log_event(settings.kb_log_path, {
+                "ts": time.time(), "thread_id": thread_id, "question": question, "plan": plan,
+                "hits": [{"file": h.get("file_name"), "page": (h.get("meta") or {}).get("page"),
+                          "score": h.get("score")} for h in hits],
+                "reason": reason, "answer": answer, "timing": timing,
+                "usage": meter.calls, "cost_usd": meter.total_usd})
+
         try:
-            plan = retrieval.plan_query(provider, history, question, model=settings.kb_plan_model)
+            plan = retrieval.plan_query(provider, history, question, model=settings.kb_plan_model,
+                                        usage=meter.step("planner"))
             mark("plan_s")
             hits = retrieval.retrieve(state.store, provider, collection=settings.kb_collection, plan=plan,
                                       question=question, top_k=settings.kb_top_k,
-                                      threshold=settings.kb_threshold)
+                                      threshold=settings.kb_threshold, usage=meter.step("embeddings"))
             mark("retrieve_s")
         except Exception as e:
+            record_cost(costs.ERROR)  # the planner may already have been billed
             raise _provider_error(e)
         language = plan.get("language") or retrieval.guess_language(question)
-        tokens: Iterator[str] | None = None
         candidates: list[dict] = []
         if hits:
             messages, candidates = guardrails.build_kb_messages(question=question, plan=plan, hits=hits,
                                                                 history=history)
             try:
                 # Wait for the first chunk here so a provider failure is still a 502, not a broken stream.
-                tokens = iter(provider.chat_stream(messages, temperature=settings.chat_temperature,
-                                                   model=settings.kb_chat_model))
-                tokens = itertools.chain([next(tokens, "")], tokens)
+                answer_iter = iter(provider.chat_stream(messages, temperature=settings.chat_temperature,
+                                                        model=settings.kb_chat_model,
+                                                        usage=meter.step("answer")))
+                tokens = itertools.chain([next(answer_iter, "")], answer_iter)
             except Exception as e:
+                record_cost(costs.ERROR)  # a failed call is not billed; planner and embeddings were
                 raise _provider_error(e)
+        gate = guardrails.StreamGate(len(candidates), language)
 
         def stream() -> Iterator[str]:
+            try:
+                yield from answer_stream()
+            finally:
+                record_cost(costs.ABORTED)  # no-op when the answer already completed
+
+        def answer_stream() -> Iterator[str]:
             if tokens is None:
                 # Nothing relevant in the knowledge base: refuse without calling the chat model.
                 answer = guardrails.refusal_text(language, settings.refusal_contact)
@@ -340,13 +428,13 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
                 for piece in _word_groups(answer):
                     yield _sse("token", {"text": piece})
             else:
-                gate = guardrails.StreamGate(len(candidates), language)
                 try:
                     for token in tokens:
                         if out := gate.feed(token):
                             timing.setdefault("first_token_s", round(time.perf_counter() - t0, 3))
                             yield _sse("token", {"text": out})
                 except Exception as e:
+                    record_cost(costs.ERROR)
                     yield _sse("error", {"detail": _provider_error(e).detail})
                     return
                 if out := gate.flush():
@@ -369,15 +457,10 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
                 title = _make_title(question)
                 state.threads.rename(thread_id, title)
             saved = state.threads.add_message(thread_id, "assistant", answer, citations or None)
-            mark("total_s")
-            guardrails.log_event(settings.kb_log_path, {
-                "ts": time.time(), "thread_id": thread_id, "question": question, "plan": plan,
-                "hits": [{"file": h.get("file_name"), "page": (h.get("meta") or {}).get("page"),
-                          "score": h.get("score")} for h in hits],
-                "reason": reason, "answer": answer, "timing": timing})
+            record_cost(reason, answer)
             yield _sse("done", {"message_id": saved["id"], "title": title, "refused": reason})
 
-        return StreamingResponse(stream(), media_type="text/event-stream", headers=SSE_HEADERS)
+        return StreamingResponse(_closing(stream()), media_type="text/event-stream", headers=SSE_HEADERS)
 
     @app.post("/api/threads/{thread_id}/chat")
     def chat(thread_id: str, request: Request, data: dict = Body(...)):

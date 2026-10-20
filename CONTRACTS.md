@@ -307,3 +307,8 @@ settings gear hidden unless URL has `?admin=1`. `done.refused` -> style the mess
   (calls with `question_id` NULL), printing the run's cost. Unchanged files make no calls and record nothing.
   Summary adds `indexing: {calls, input, spend_usd}` for runs in the range; it is not part of `spend_usd`,
   `by_step`, `by_model` or the per-question figures.
+- Scripts (#9): the summary adds `test_spend_usd` (spend of test questions in the range). `scripts/eval_kb.py`
+  prints each item's cost with `--show` and a run line (total, mean per question, answered mean, answer-step
+  share) from the `cost_usd` / `usage` of the log records. `scripts/bench_kb.py --admin-token T` (or
+  `ADMIN_TOKEN`) tags its requests as test traffic and prints the run's cost from the difference in
+  `test_questions` / `test_spend_usd` before and after; without a token it says cost was not measured.

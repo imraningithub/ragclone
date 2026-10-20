@@ -289,8 +289,9 @@ class CostStore:
             indexing = self._conn.execute(
                 "SELECT COUNT(*) AS calls, COALESCE(SUM(input), 0) AS input, COALESCE(SUM(usd), 0) AS usd "
                 f"FROM calls WHERE question_id IS NULL AND {in_range}", args).fetchone()
-            test_questions = self._conn.execute(
-                f"SELECT COUNT(*) FROM questions WHERE {in_range} AND test = 1", args).fetchone()[0]
+            test_questions, test_spend = self._conn.execute(
+                f"SELECT COUNT(*), COALESCE(SUM(total_usd), 0) FROM questions WHERE {in_range} AND test = 1",
+                args).fetchone()
             rows = self._conn.execute(
                 f"SELECT id, ts, visitor, question, total_usd, unknown, estimated, reason FROM questions {where}",
                 args).fetchall()
@@ -312,6 +313,7 @@ class CostStore:
             "range": range_name,
             "include_test": include_test,
             "test_questions": test_questions,
+            "test_spend_usd": test_spend,  # what benchmarks and manual tests cost (scripts/bench_kb.py)
             "questions": len(costs),
             "spend_usd": sum(costs),
             "per_question": {"mean": statistics.fmean(costs) if costs else None,

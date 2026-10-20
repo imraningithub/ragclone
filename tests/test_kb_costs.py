@@ -605,3 +605,16 @@ def test_reindexing_cost_is_recorded_apart_from_questions(tmp_path):
     assert after["spend_usd"] == pytest.approx(0.00463)              # the question alone
     assert after["per_question"]["mean"] == pytest.approx(0.00463)
     assert "indexing" not in {r["step"] for r in after["by_step"]}
+
+
+# -- #9: what test traffic cost (for the benchmark script) ----------------------------------------------------
+
+def test_test_spend_is_reported_separately(tmp_path):
+    client, _ = _client(tmp_path)
+    with client:
+        _ask_with(client, {"X-Traffic": "test", **ADMIN})
+        _ask_with(client, {"X-Traffic": "test", **ADMIN})
+        _ask(client)
+        costs = client.get("/api/admin/costs?range=today", headers=ADMIN).json()
+    assert costs["test_questions"] == 2 and costs["test_spend_usd"] == pytest.approx(2 * 0.00463)
+    assert costs["spend_usd"] == pytest.approx(0.00463)  # still excluded from the student figures

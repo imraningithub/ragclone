@@ -34,6 +34,17 @@ def approx_tokens(text: str) -> int:
     return max(1, math.ceil(len(text) / 4)) if text else 0
 
 
+def _report_usage(usage: Usage | None, model: str, reported) -> None:
+    """Pass an OpenAI `usage` object to the recorder. cached_tokens is part of prompt_tokens; the SDK may leave
+    prompt_tokens_details or cached_tokens as None, which counts as 0."""
+    if usage is None or reported is None:
+        return
+    details = getattr(reported, "prompt_tokens_details", None)
+    cached = getattr(details, "cached_tokens", None) or 0
+    usage(model, getattr(reported, "prompt_tokens", 0) or 0, cached,
+          getattr(reported, "completion_tokens", 0) or 0)
+
+
 class OpenAIProvider:
     name = "openai"
 
@@ -52,6 +63,7 @@ class OpenAIProvider:
         if not texts:
             return []
         resp = self.client.embeddings.create(model=self.embed_model, input=texts)
+        _report_usage(usage, self.embed_model, getattr(resp, "usage", None))  # prompt tokens only
         return [d.embedding for d in sorted(resp.data, key=lambda d: d.index)]
 
     def chat_stream(self, messages: list[dict], temperature: float | None = None,
@@ -59,10 +71,16 @@ class OpenAIProvider:
         kwargs: dict = {}
         if temperature is not None:
             kwargs["temperature"] = temperature
+        if usage is not None:
+            # One extra chunk before [DONE] carries the usage, with an empty choices list. An interrupted
+            # stream may never deliver it; the caller then estimates.
+            kwargs["stream_options"] = {"include_usage": True}
         stream = self.client.chat.completions.create(
             model=model or self.chat_model, messages=messages, stream=True, **kwargs
         )
         for event in stream:
+            if getattr(event, "usage", None) is not None:
+                _report_usage(usage, model or self.chat_model, event.usage)
             if event.choices and event.choices[0].delta and event.choices[0].delta.content:
                 yield event.choices[0].delta.content
 
@@ -75,6 +93,7 @@ class OpenAIProvider:
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
         resp = self.client.chat.completions.create(model=model or self.chat_model, messages=messages, **kwargs)
+        _report_usage(usage, model or self.chat_model, getattr(resp, "usage", None))
         if not resp.choices:
             return ""
         return resp.choices[0].message.content or ""

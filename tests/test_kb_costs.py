@@ -128,8 +128,10 @@ def test_concurrent_questions_keep_their_own_usage(tmp_path):
 
         def chat_stream(self, messages, temperature=None, model=None, usage=None):
             # Answer size depends on the question, so mixed-up usage would show in the per-question costs.
-            self.answer_usage = (2000, 1024, 1000 if "lange" in messages[-1]["content"] else 200)
-            yield from super().chat_stream(messages, temperature=temperature, model=model, usage=usage)
+            # Kept local: shared provider state would race between the two threads.
+            output = 1000 if "lange" in messages[-1]["content"] else 200
+            yield from super().chat_stream(messages, temperature=temperature, model=model)
+            usage(model, 2000, 1024, output)
 
     provider = SlowProvider()
     client, _ = _client(tmp_path, provider)

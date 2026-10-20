@@ -133,8 +133,8 @@ Uploaded files are saved under `data/uploads/<thread_id>/<file_id>_<name>` (the 
 # KB mode (DTM Studienassistent) — additional contracts
 
 Settings (app/config.py, done): `app_mode` ("chat"|"kb"), `kb_name`, `kb_dir`, `kb_collection` (= "kb_<kb_name>"),
-`refusal_contact`, `chat_temperature`, `admin_token`, `rate_limit_per_min` (0=off), `kb_chunk_size` (1000),
-`kb_overlap` (150), `kb_top_k` (6), `kb_threshold` (0.2), `kb_log_path`. All have defaults, so existing
+`refusal_contact`, `chat_temperature`, `admin_token`, `rate_limit_per_min` (0=off), `kb_chunk_size` (350),
+`kb_overlap` (70), `kb_top_k` (6), `kb_threshold` (0.2), `kb_log_path`. All have defaults, so existing
 `Settings(...)` constructions in tests keep working.
 
 ## app/parsing.py (agent A)
@@ -155,8 +155,10 @@ def parse_pdf_pages(path: str) -> list[tuple[int, str]]   # 1-based page numbers
 ```python
 def ingest_kb_file(store, provider, settings, *, collection: str, path: str, name: str) -> dict  # FileInfo
 ```
-- Always embeddings mode. PDFs: `parse_pdf_pages`, chunk each page separately with
-  `chunk_text(page_text, settings.kb_chunk_size, settings.kb_overlap)`, meta `{"page": n}`.
+- Always embeddings mode. PDFs: `parse_pdf_pages`, then `chunk_pages(pages, settings.kb_chunk_size, settings.kb_overlap)`
+  (chunks each page with `chunk_text`, meta `{"page": n}`). A chunk that starts inside a legal section (`§ n Title`)
+  gets that heading as its first line, so the title is embedded and keyword-indexed with it. Changing the chunking
+  needs `scripts/ingest_kb.py --rebuild`.
   Other types: `parse_document` + chunk, meta `{}`. Embed in batches of 64, `create_collection`, `add_file`, `insert_chunks`.
 - Empty text -> ValueError("no extractable text") (KB files must have text).
 
@@ -233,3 +235,80 @@ settings gear hidden unless URL has `?admin=1`. `done.refused` -> style the mess
 - `provider.complete(..., model=None)`; KB mode uses `settings.kb_chat_model` (default gpt-4.1) for plan + answer.
 - `guardrails.cited_only(answer, citations)`: the API sends only cited sources. The binding line is forced into the
   answer language. KB mode stores chats in `data/kb_threads.db`. `parse_pdf_pages` uses pypdfium2 (pypdf fallback).
+
+## KB mode — streaming answers and per-visitor threads (supersede the text above where they differ)
+- Settings: `kb_plan_model` (`KB_PLAN_MODEL`, default `gpt-4.1-mini`) is used by `plan_query`; `kb_chat_model` only for
+  the answer. `rate_limit_per_min` counts per visitor (owner id, IP when missing); `rate_limit_ip_per_min`
+  (`RATE_LIMIT_IP_PER_MIN`, 0 = off) counts per client IP. Either one exceeded -> 429.
+- `provider.chat_stream(messages, temperature=None, model=None)`. FakeProvider streams its KB answer when the system
+  prompt contains `<excerpt`.
+- `guardrails.StreamGate(n_citations, language)`: `feed(token) -> str`, `flush() -> str` return text that may be shown
+  now; `raw` (all model output), `sent` (released, cleaned like `finalize_answer`), `stuck`. Releases nothing until a
+  valid `[n]` and no NO_ANSWER marker are present; holds back a trailing open `[` and trailing whitespace.
+- `POST /api/threads/{id}/chat` in kb mode: plan + retrieval + the first answer chunk happen before the response
+  starts (provider errors there -> 502). SSE order: `token`* (released text; for refusals the fixed refusal text in
+  word groups), optional `reset` `{"text": final}` (replaces everything shown so far), `citations` (cited sources,
+  `[]` when refused), `done` `{"message_id","title","refused"}`. A provider error mid-stream -> `error` and nothing is
+  saved. User + assistant messages are saved and the log line written only after the answer is complete; the log
+  record adds `timing: {plan_s, retrieve_s, first_token_s, total_s}`.
+- Visitors: kb mode middleware gives every request `request.state.owner` = sha256 of the `dtm_client` cookie
+  (random `secrets.token_urlsafe(32)`, set when missing/malformed: httpOnly, SameSite=Lax, Secure on https, 1 year).
+  `ThreadStore.create(title, owner=None)`, `list(owner=None)`, `get(id, owner=None)`; with an owner, other owners'
+  threads raise KeyError (-> 404 for get/patch/delete/files/chat). `threads.owner` column is added to old DBs; their
+  threads keep owner NULL. Chat mode passes no owner (unscoped, no cookie).
+
+## KB mode — cost tracking (spec: imraningithub/ragclone#1)
+- `app/costs.py`: `PRICES` (USD per 1M tokens: input, cached input, output; `PRICES_AS_OF`, `PRICES_SOURCE`, from
+  `docs/research/openai-pricing.md`), `call_cost(model, input, cached, output) -> float | None` (None = model not in
+  the table, never 0), `UsageMeter` (one per question; `step(name)` returns the recorder passed to a provider as
+  `usage`; `calls`, `total_usd`, `unknown`), `CostStore(db_path, clock)` (`data/kb_costs.db`: `questions` and `calls`
+  tables; `record_question(meter, visitor, reason, question, timing)`, `summary(range)` with range
+  today/7d/30d/all in Europe/Berlin calendar days).
+- Providers: `complete(..., usage=None)`, `chat_stream(..., usage=None)`, `embed(texts, usage=None)`; when given,
+  `usage(model, input_tokens, cached_tokens, output_tokens)` is called once per API call (stream: after the last
+  token). FakeProvider reports `plan_usage` / `answer_usage` / `embed_tokens` when set, else ~4 chars per token.
+  `retrieval.plan_query(..., usage=None)` and `retrieve(..., usage=None)` pass it on only when given.
+- `create_app(settings, provider, clock=time.time)`. KB chat records steps planner / embeddings / answer and writes
+  one cost record when the answer is complete; the `kb_log.jsonl` line adds `usage` (the calls) and `cost_usd`.
+- `GET /api/admin/costs?range=` (admin token, else 403; bad range 400) -> `{range, questions, spend_usd,
+  per_question: {mean, median, p95 (nearest rank)}, unknown_cost_questions, pricing: {as_of, source, currency,
+  estimated}}`. `GET /admin/costs` serves `web/admin.html` (no data; token in sessionStorage `dtm_admin_token`).
+- Outcomes (#4): `costs.ANSWERED` (stored as reason NULL), `no_context` / `no_answer` / `uncited`, `costs.ABORTED`
+  (stream closed before the answer completed) and `costs.ERROR` (a model call failed, before or during streaming;
+  calls already billed are kept, a failed call is not). KB chat writes the record exactly once via one helper; the
+  response streams through `main._closing`, which closes the sync generator when the response ends early. When
+  the answer's usage never arrived, the answer call is estimated (~4 chars/token of prompt and generated text,
+  `estimated: true`). Under uvicorn a disconnect is not noticed (the cookie middleware does not listen for it and
+  uvicorn drops writes), so the answer completes and is recorded as answered with exact usage. 400/429 requests
+  record nothing. Summary adds `estimated_questions` and `by_reason: [{reason, questions, spend_usd}]`
+  (answered first).
+- Breakdown (#5): settings `semester_start` (`SEMESTER_START`, ISO date, Europe/Berlin) enables range `semester`
+  (400 when unset). `costs.Pricing(path)`: built-in `PRICES` merged with optional `data/pricing.json`
+  `{"as_of", "source", "models": {"<model>": {"input", "cached_input"?, "output"?}}}` (USD per 1M tokens), read at
+  startup; a broken file keeps the built-in prices and sets `override_error`. Costs are priced when recorded, so an
+  override changes new questions only. `UsageMeter(pricing)`, `CostStore(..., semester_start, pricing)`. Summary
+  adds `by_step` / `by_model` (`calls, input, cached, output, spend_usd`, most expensive first), `daily`
+  (`[{date, planner, embeddings, answer, total}]` per Berlin day in the range, zeros included, oldest first),
+  `cache` (`{input, cached, share}` over planner + answer calls; embeddings can't be cached) and
+  `pricing.override_error`.
+- Top lists and retention (#6): summary adds `top_questions` (max 10, most expensive first: `{id, asked_at`
+  (Europe/Berlin ISO), `question` (None once purged), `reason, spend_usd, input, cached, output, steps: {step: usd}}`),
+  `top_visitors` (max 10: `{visitor` = first 8 chars of the stored cookie hash, `questions, spend_usd}`) and
+  `retention_days` (30). `CostStore.purge_question_text()` sets question text older than 30 days to NULL (rows,
+  tokens and cost stay); it runs when the store opens (app start) and from `record_question` at most once a day.
+- Test traffic (#7): a chat request with `X-Traffic: test` and a valid `X-Admin-Token` is stored with
+  `questions.test = 1` (column added to older cost DBs at startup; old rows count as real traffic). The header
+  without a valid token is ignored and never blocks the question. `GET /api/admin/costs?include_test=false`
+  (default) excludes test questions from every figure; the response adds `include_test` and `test_questions`
+  (test questions in the range, counted either way). The dashboard has an "Include test traffic" toggle
+  (`?include_test=1` in the URL).
+- Indexing cost (#8): `rag.ingest_kb_file(..., usage=None)` passes the recorder to every embedding batch;
+  `scripts/ingest_kb.py` collects them as step `indexing` and stores them with `CostStore.record_indexing(meter)`
+  (calls with `question_id` NULL), printing the run's cost. Unchanged files make no calls and record nothing.
+  Summary adds `indexing: {calls, input, spend_usd}` for runs in the range; it is not part of `spend_usd`,
+  `by_step`, `by_model` or the per-question figures.
+- Scripts (#9): the summary adds `test_spend_usd` (spend of test questions in the range). `scripts/eval_kb.py`
+  prints each item's cost with `--show` and a run line (total, mean per question, answered mean, answer-step
+  share) from the `cost_usd` / `usage` of the log records. `scripts/bench_kb.py --admin-token T` (or
+  `ADMIN_TOKEN`) tags its requests as test traffic and prints the run's cost from the difference in
+  `test_questions` / `test_spend_usd` before and after; without a token it says cost was not measured.

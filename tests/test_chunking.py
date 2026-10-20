@@ -1,6 +1,6 @@
 import pytest
 
-from app.chunking import chunk_text
+from app.chunking import chunk_text, section_headings
 
 
 def test_empty_and_whitespace_text_gives_no_chunks():
@@ -97,3 +97,43 @@ def test_table_row_longer_than_chunk_is_split_with_header():
 def test_prose_unchanged_without_sheet_marker():
     text = "Para one. " * 30 + "\n\n" + "Para two. " * 30
     assert all(not c.startswith("# Sheet") for c in chunk_text(text, 100, 10))
+
+
+def test_section_headings_skip_references():
+    text = ("§ 3 Zulassung, Regelstudienzeit, Beginn und Aufbau des Studiums\n"
+            "(1) Nach § 3 Abs. 6 Satz 2 gilt Folgendes.\n"
+            "§ 22 para. 1 sentence 2 ASPO refers to a form.\n"
+            "§ 4 Curriculare Struktur 1Das Studium hat folgende Struktur.")
+    titles = [t for _, t in section_headings(text)]
+    assert titles == ["§ 3 Zulassung, Regelstudienzeit, Beginn und Aufbau des Studiums",
+                      "§ 4 Curriculare Struktur"]
+
+
+def test_chunk_pages_gives_chunks_inside_a_section_the_section_title():
+    from app.chunking import chunk_pages
+
+    body = "(3) Der Studiengang ist ein Vollzeitstudium. " * 20
+    pages = [
+        (2, "§ 2 Studienziel\nDas Ziel ist Bildung. Mehr Text hier.\n"),
+        # The § 3 heading is on page 2, its later paragraphs on page 3.
+        (2, "§ 3 Zulassung, Regelstudienzeit und Aufbau\n(1) Zulassung. (2) Weiteres."),
+        (3, "(4) Regelstudienzeit von sieben Semestern mit 210 ECTS-Punkten. " + body),
+    ]
+    out = chunk_pages(pages, chunk_size=300, overlap=30)
+    by_text = {c: p for p, c in out}
+    head = "§ 3 Zulassung, Regelstudienzeit und Aufbau"
+    # The chunk with the ECTS sentence starts inside § 3 and must carry its title.
+    ects = next(c for _, c in out if "210 ECTS" in c)
+    assert ects.startswith(head + "\n(4) Regelstudienzeit")
+    # The heading chunk itself is not prefixed a second time.
+    first_of_sec3 = next(c for _, c in out if c.startswith(head))
+    assert first_of_sec3.count(head) == 1
+    # Pages are kept for citations.
+    assert by_text[ects] == 3
+
+
+def test_chunk_pages_without_headings_is_plain_chunking():
+    from app.chunking import chunk_pages
+
+    text = "Some plain lecture notes. " * 40
+    assert [c for _, c in chunk_pages([(1, text)], 200, 20)] == chunk_text(text, 200, 20)

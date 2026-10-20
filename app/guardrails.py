@@ -187,7 +187,20 @@ def finalize_answer(text: str, citations: list[dict], *, language: str,
     if not text.strip() or _is_no_answer(text):
         return refusal_text(language, contact), "no_answer"
 
-    n_max = len(citations)
+    cleaned, found_valid = _fix_citations(text, len(citations))
+    if not found_valid:
+        return refusal_text(language, contact), "uncited"
+    return _clean_accepted(cleaned, language), None
+
+
+def _clean_accepted(cleaned: str, language: str) -> str:
+    # A stray marker inside an otherwise grounded answer (e.g. after a partial answer) is dropped.
+    cleaned = _NO_ANSWER_RE.sub("", cleaned) if _NO_ANSWER_RE.search(cleaned) else cleaned
+    return _fix_binding_line(cleaned, language)
+
+
+def _fix_citations(text: str, n_max: int) -> tuple[str, bool]:
+    """Drop citation ids outside 1..n_max; report whether any valid citation is left."""
     found_valid = False
 
     def fix(m: re.Match) -> str:
@@ -204,11 +217,54 @@ def finalize_answer(text: str, citations: list[dict], *, language: str,
         return f"{lead}[{', '.join(str(x) for x in valid)}]"
 
     cleaned = _CITE_RE.sub(fix, text)
-    if not found_valid:
-        return refusal_text(language, contact), "uncited"
-    # A stray marker inside an otherwise grounded answer (e.g. after a partial answer) is dropped.
-    cleaned = _NO_ANSWER_RE.sub("", cleaned) if _NO_ANSWER_RE.search(cleaned) else cleaned
-    return _fix_binding_line(cleaned, language), None
+    return cleaned, found_valid
+
+
+class StreamGate:
+    """Decides which part of a still-generating answer may already be shown.
+
+    Nothing is released until the output contains a valid [n] citation and no NO_ANSWER marker, so
+    refusals ("no_answer"/"uncited") never leak partial text. After that, the cleaned text (same rules
+    as finalize_answer) is released up to the last point that cannot change any more: a trailing open
+    "[..." or whitespace (an invalid citation also removes the space before it) is held back.
+    `sent` is everything released so far; if finalize_answer's result differs from it at the end
+    (refusal, or a late correction), the caller replaces the shown text.
+    """
+
+    def __init__(self, n_citations: int, language: str) -> None:
+        self.n_citations = n_citations
+        self.language = language
+        self.raw = ""
+        self.sent = ""
+        self.open = False
+        self.stuck = False  # cleaned text stopped extending `sent`; wait for the final text
+
+    def feed(self, token: str) -> str:
+        self.raw += token or ""
+        return self._release(final=False)
+
+    def flush(self) -> str:
+        return self._release(final=True)
+
+    def _release(self, final: bool) -> str:
+        if self.stuck:
+            return ""
+        if not self.open:
+            if _NO_ANSWER_RE.search(self.raw) or not _fix_citations(self.raw, self.n_citations)[1]:
+                return ""
+            self.open = True
+        safe = self.raw
+        if not final:
+            bracket = safe.rfind("[")
+            if bracket > safe.rfind("]"):
+                safe = safe[:bracket]
+            safe = safe.rstrip()
+        cleaned = _clean_accepted(_fix_citations(safe, self.n_citations)[0], self.language)
+        if not cleaned.startswith(self.sent):
+            self.stuck = True
+            return ""
+        out, self.sent = cleaned[len(self.sent):], cleaned
+        return out
 
 
 def cited_only(answer: str, citations: list[dict]) -> list[dict]:

@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pypdf  # noqa: E402
 
-from app import rag  # noqa: E402
+from app import costs, rag  # noqa: E402
 from app.config import Settings, get_settings  # noqa: E402
 from app.parsing import SUPPORTED_EXTENSIONS  # noqa: E402
 from app.providers import get_provider  # noqa: E402
@@ -92,6 +92,8 @@ def run(settings: Settings, provider, *, rebuild: bool = False, kb_dir: Path | s
     coll = settings.kb_collection
     mpath = manifest_path(settings)
     manifest = {} if rebuild else load_manifest(mpath)
+    # Embedding the documents costs money once per (re-)index; record it apart from student questions.
+    meter = costs.UsageMeter(costs.Pricing(settings.data_dir / "pricing.json"))
     try:
         if rebuild:
             store.delete_collection(coll)
@@ -127,7 +129,7 @@ def run(settings: Settings, provider, *, rebuild: bool = False, kb_dir: Path | s
                 manifest.pop(path.name, None)
                 try:
                     info = rag.ingest_kb_file(store, provider, settings, collection=coll,
-                                              path=str(path), name=path.name)
+                                              path=str(path), name=path.name, usage=meter.step("indexing"))
                 except Exception as exc:  # one bad file must not stop the rest
                     row.update(status="error", error=f"{type(exc).__name__}: {exc}")
                 else:
@@ -140,6 +142,15 @@ def run(settings: Settings, provider, *, rebuild: bool = False, kb_dir: Path | s
         save_manifest(mpath, manifest)  # also after a crash, so finished files are not redone
         if own_store:
             store.close()
+        if meter.calls:
+            cost_store = costs.CostStore(settings.kb_costs_db_path)
+            try:
+                cost_store.record_indexing(meter)
+            finally:
+                cost_store.close()
+            tokens = sum(c["input"] for c in meter.calls)
+            print(f"indexing: {len(meter.calls)} embedding call(s), {tokens} tokens, "
+                  f"~${meter.total_usd:.5f} (estimated)")
 
 
 def summary(rows: list[dict]) -> str:

@@ -9,6 +9,13 @@ _SENTENCE_END = re.compile(r"[.!?][\"')\]]?\s")
 # Table blocks written by parsing.py: "# Sheet: name", a header row, data rows; blocks end at a blank line.
 SHEET_PREFIX = "# Sheet: "
 
+# Legal section headings ("§ 3 Title") that start a line. Not "§ 22 para. 1" or "§ 3 Abs. 6" references.
+_SECTION_HEADING = re.compile(
+    r"(?m)^[ \t]*§[ \t]*(\d+[a-z]?)[ \t]+(?![Aa]bs\.|[Ss]atz|[Nn]r\.|[Pp]ara|[Ss]entence)([A-ZÄÖÜ][^\n]*)")
+# Where a heading's title ends in running text: "(1)" paragraph numbers or a glued footnote number ("1Die ...").
+_TITLE_END = re.compile(r"\s\(\d+\)|\s\d+[A-Za-zÄÖÜäöü]")
+_TITLE_MAX = 100
+
 
 def _find_break(text: str, start: int, end: int, size: int) -> int:
     """Pick a cut point in the last ~20% of the window: paragraph, sentence, line, then whitespace."""
@@ -74,6 +81,45 @@ def _chunk_table(block: str, chunk_size: int, overlap: int) -> list[str]:
     if current:
         chunks.append(head + "\n" + "\n".join(current))
     return chunks
+
+
+def section_headings(text: str) -> list[tuple[int, str]]:
+    """(offset, "§ 3 Title") for every legal section heading in text, in order."""
+    out = []
+    for m in _SECTION_HEADING.finditer(text):
+        title = _TITLE_END.split(m.group(2), maxsplit=1)[0].strip()
+        if len(title) > _TITLE_MAX:
+            title = title[:_TITLE_MAX].rsplit(" ", 1)[0]
+        out.append((m.start(), f"§ {m.group(1)} {title}"))
+    return out
+
+
+def chunk_pages(pages: list[tuple[int, str]], chunk_size: int = 512, overlap: int = 64) -> list[tuple[int, str]]:
+    """chunk_text() per page, returning (page, chunk) pairs.
+
+    A chunk that does not open with a section heading gets the heading of the section it starts in as
+    its first line. Otherwise a chunk from the middle of § 3 never mentions "Regelstudienzeit" (the title
+    sits in another chunk), and neither its embedding nor its keyword index can find it. Sections may
+    run over several pages, so the current heading carries from one page to the next.
+    """
+    out: list[tuple[int, str]] = []
+    section = ""
+    for page, text in pages:
+        headings = section_headings(text)
+        for chunk in chunk_text(text, chunk_size, overlap):
+            start = text.find(chunk)  # chunks are substrings of their page
+            if start < 0 or _SECTION_HEADING.match(chunk):
+                out.append((page, chunk))
+                continue
+            current = section
+            for offset, title in headings:
+                if offset > start:
+                    break
+                current = title
+            out.append((page, f"{current}\n{chunk}" if current else chunk))
+        if headings:
+            section = headings[-1][1]
+    return out
 
 
 def chunk_text(text: str, chunk_size: int = 512, overlap: int = 64) -> list[str]:

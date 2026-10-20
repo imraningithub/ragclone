@@ -154,13 +154,15 @@ def _parse_plan(raw: str, question: str) -> dict:
             "queries_en": _queries(data.get("queries_en"), question)}
 
 
-def plan_query(provider, history: list[dict], question: str, model: str | None = None) -> dict:
+def plan_query(provider, history: list[dict], question: str, model: str | None = None, usage=None) -> dict:
     """Resolve follow-ups, detect the student's language and produce German and English search queries.
 
     Never raises: any provider error or malformed output falls back to the raw question.
     """
     try:
-        raw = provider.complete(_plan_messages(history, question), json_mode=True, temperature=0, model=model)
+        extra = {"usage": usage} if usage is not None else {}  # only providers that support it get it
+        raw = provider.complete(_plan_messages(history, question), json_mode=True, temperature=0, model=model,
+                                **extra)
         return _parse_plan(raw, question)
     except Exception as exc:  # noqa: BLE001 - planning is best-effort
         log.warning("plan_query fallback: %s", exc)
@@ -170,6 +172,7 @@ def plan_query(provider, history: list[dict], question: str, model: str | None =
 RRF_K = 60  # reciprocal rank fusion constant (standard value)
 CANDIDATES_PER_QUERY = 30
 MAX_PER_FILE = 4  # keep one big document (e.g. the module handbook) from filling every slot
+FULL_QUERY_WEIGHT = 2.0  # the question and its standalone rewrite count double: they are the most faithful signal, the keyword queries add breadth
 KEYWORD_WEIGHT = 0.5  # keyword lists help with exact names/dates but common words ("Semester") add noise
 
 
@@ -183,7 +186,7 @@ def _strip_program_name(query: str) -> str:
 
 
 def retrieve(store, provider, *, collection: str, plan: dict, question: str, top_k: int,
-             threshold: float, max_per_file: int = MAX_PER_FILE) -> list[dict]:
+             threshold: float, max_per_file: int = MAX_PER_FILE, usage=None) -> list[dict]:
     """Hybrid search: vector + keyword (BM25) results for the question, the standalone rewrite and every
     German/English query, merged with reciprocal rank fusion.
 
@@ -194,19 +197,22 @@ def retrieve(store, provider, *, collection: str, plan: dict, question: str, top
     queries = [_strip_program_name(q) for q in [*(plan.get("queries_de") or []), *(plan.get("queries_en") or [])]
                if isinstance(q, str)]
     texts: list[str] = []
-    for t in [question, plan.get("standalone"), *queries]:
+    weights: list[float] = []
+    for t, w in [(question, FULL_QUERY_WEIGHT), (plan.get("standalone"), FULL_QUERY_WEIGHT),
+                 *((q, 1.0) for q in queries)]:
         if isinstance(t, str) and t.strip() and t.strip() not in texts:
             texts.append(t.strip())
+            weights.append(w)
     if not texts or top_k <= 0:
         return []
-    embeddings = provider.embed(texts)
+    embeddings = provider.embed(texts, usage=usage) if usage is not None else provider.embed(texts)
 
     rrf: dict[str, float] = {}
     hits: dict[str, dict] = {}
     cosine: dict[str, float] = {}
 
-    def add(ranked: list[dict], dense: bool) -> None:
-        weight = 1.0 if dense else KEYWORD_WEIGHT
+    def add(ranked: list[dict], dense: bool, query_weight: float) -> None:
+        weight = (1.0 if dense else KEYWORD_WEIGHT) * query_weight
         for rank, hit in enumerate(ranked):
             cid = hit["chunk_id"]
             rrf[cid] = rrf.get(cid, 0.0) + weight / (RRF_K + rank + 1)
@@ -217,10 +223,10 @@ def retrieve(store, provider, *, collection: str, plan: dict, question: str, top
             if dense:
                 cosine[cid] = max(cosine.get(cid, -1.0), hit["score"])
 
-    for text, emb in zip(texts, embeddings):
-        add(store.search(collection, emb, limit=CANDIDATES_PER_QUERY, threshold=-1.0, mode="auto"), dense=True)
+    for text, emb, w in zip(texts, embeddings, weights):
+        add(store.search(collection, emb, limit=CANDIDATES_PER_QUERY, threshold=-1.0, mode="auto"), True, w)
         if hasattr(store, "keyword_search"):
-            add(store.keyword_search(collection, text, limit=CANDIDATES_PER_QUERY), dense=False)
+            add(store.keyword_search(collection, text, limit=CANDIDATES_PER_QUERY), False, w)
 
     # Chunks found only by keyword search still need a cosine score for the threshold gate.
     missing = [cid for cid in hits if cid not in cosine]

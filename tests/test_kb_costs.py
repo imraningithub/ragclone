@@ -337,3 +337,109 @@ def test_rejected_requests_cost_nothing_and_follow_ups_count_individually(tmp_pa
         assert client.post(f"/api/threads/{tid}/chat", json={"message": Q}).status_code == 429
         costs = client.get("/api/admin/costs?range=all", headers=ADMIN).json()
     assert costs["questions"] == 2  # the question and its follow-up in the same chat
+
+
+# -- #5: where the money goes ---------------------------------------------------------------------------------
+
+def test_cost_by_step_and_by_model(tmp_path):
+    client, _ = _client(tmp_path)
+    with client:
+        _ask(client)
+        _ask(client)
+        costs = client.get("/api/admin/costs?range=all", headers=ADMIN).json()
+    by_step = {r["step"]: r for r in costs["by_step"]}
+    assert by_step["planner"] == {"step": "planner", "calls": 2, "input": 2000, "cached": 0, "output": 200,
+                                  "spend_usd": pytest.approx(2 * 0.00056)}
+    assert by_step["embeddings"] == {"step": "embeddings", "calls": 2, "input": 600, "cached": 0, "output": 0,
+                                     "spend_usd": pytest.approx(2 * 0.000006)}
+    assert by_step["answer"] == {"step": "answer", "calls": 2, "input": 4000, "cached": 2048, "output": 400,
+                                 "spend_usd": pytest.approx(2 * ANSWER_USD)}
+    assert [r["step"] for r in costs["by_step"]] == ["answer", "planner", "embeddings"]  # most expensive first
+    by_model = {r["model"]: r["spend_usd"] for r in costs["by_model"]}
+    assert by_model == {"gpt-4.1": pytest.approx(2 * ANSWER_USD), "gpt-4.1-mini": pytest.approx(2 * 0.00056),
+                        "text-embedding-3-small": pytest.approx(2 * 0.000006)}
+
+
+def _clocked(tmp_path, provider=None, **kw):
+    now = {"t": 0.0}
+    settings = _settings(tmp_path, **kw)
+    _seed(settings)
+    return TestClient(create_app(settings, provider or UsageProvider(), clock=lambda: now["t"])), now
+
+
+def test_daily_series_per_step_in_berlin_days(tmp_path):
+    client, now = _clocked(tmp_path)
+    with client:
+        for asked_at in ("2026-10-19T08:00", "2026-10-20T07:00", "2026-10-20T08:00"):
+            now["t"] = _utc(asked_at)
+            _ask(client)
+        now["t"] = _utc("2026-10-20T10:00")
+        daily = client.get("/api/admin/costs?range=7d", headers=ADMIN).json()["daily"]
+    assert [d["date"] for d in daily] == [f"2026-10-{n}" for n in range(14, 21)]  # every day, oldest first
+    assert daily[0] == {"date": "2026-10-14", "planner": 0, "embeddings": 0, "answer": 0, "total": 0}
+    assert daily[5]["answer"] == pytest.approx(ANSWER_USD)
+    assert daily[6]["planner"] == pytest.approx(2 * 0.00056)
+    assert daily[6]["total"] == pytest.approx(2 * (PLAN_AND_EMBED_USD + ANSWER_USD))
+
+
+def test_cache_share_of_chat_input(tmp_path):
+    client, _ = _client(tmp_path)
+    with client:
+        _ask(client)
+        cache = client.get("/api/admin/costs?range=all", headers=ADMIN).json()["cache"]
+    # planner 1000 in / 0 cached + answer 2000 in / 1024 cached; embeddings can't be cached
+    assert cache == {"input": 3000, "cached": 1024, "share": pytest.approx(1024 / 3000)}
+
+
+def test_semester_range_starts_at_configured_date(tmp_path):
+    client, now = _clocked(tmp_path, semester_start="2026-10-01")
+    with client:
+        for asked_at in ("2026-09-30T21:30",    # 23:30 Berlin on Sep 30: before the semester
+                         "2026-09-30T22:30"):   # 00:30 Berlin on Oct 1: first semester minute
+            now["t"] = _utc(asked_at)
+            _ask(client)
+        now["t"] = _utc("2026-10-20T10:00")
+        assert client.get("/api/admin/costs?range=semester", headers=ADMIN).json()["questions"] == 1
+
+
+def test_semester_range_without_start_date_is_rejected(tmp_path):
+    client, _ = _client(tmp_path)
+    with client:
+        r = client.get("/api/admin/costs?range=semester", headers=ADMIN)
+    assert r.status_code == 400 and "SEMESTER_START" in r.json()["detail"]
+
+
+def _with_pricing_file(tmp_path, content, provider=None):
+    settings = _settings(tmp_path)
+    _seed(settings)
+    (settings.data_dir / "pricing.json").write_text(content, "utf-8")
+    return TestClient(create_app(settings, provider or UsageProvider()))
+
+
+def test_pricing_file_overrides_and_extends_the_price_table(tmp_path):
+    import json
+
+    provider = UsageProvider()
+    provider.embed_model = "fake-embed-64"  # unknown to the built-in table, added by the file
+    client = _with_pricing_file(tmp_path, json.dumps({
+        "as_of": "2026-11-01", "source": "OpenAI invoice November",
+        "models": {"gpt-4.1": {"input": 4.0, "cached_input": 1.0, "output": 16.0},
+                   "fake-embed-64": {"input": 0.05}}}), provider)
+    with client:
+        _ask(client)
+        costs = client.get("/api/admin/costs?range=all", headers=ADMIN).json()
+    by_model = {r["model"]: r["spend_usd"] for r in costs["by_model"]}
+    assert by_model["gpt-4.1"] == pytest.approx(0.008128)       # (976*4 + 1024*1 + 200*16)e-6
+    assert by_model["gpt-4.1-mini"] == pytest.approx(0.00056)    # built-in price unchanged
+    assert by_model["fake-embed-64"] == pytest.approx(300 * 0.05e-6)
+    assert costs["unknown_cost_questions"] == 0
+    assert costs["pricing"]["as_of"] == "2026-11-01" and costs["pricing"]["source"] == "OpenAI invoice November"
+
+
+def test_broken_pricing_file_keeps_built_in_prices_and_says_so(tmp_path):
+    client = _with_pricing_file(tmp_path, "{not json")
+    with client:
+        _ask(client)
+        costs = client.get("/api/admin/costs?range=all", headers=ADMIN).json()
+    assert costs["spend_usd"] == pytest.approx(PLAN_AND_EMBED_USD + ANSWER_USD)
+    assert costs["pricing"]["as_of"] == "2026-10-20" and "pricing.json" in costs["pricing"]["override_error"]

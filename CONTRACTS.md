@@ -282,3 +282,12 @@ settings gear hidden unless URL has `?admin=1`. `done.refused` -> style the mess
   uvicorn drops writes), so the answer completes and is recorded as answered with exact usage. 400/429 requests
   record nothing. Summary adds `estimated_questions` and `by_reason: [{reason, questions, spend_usd}]`
   (answered first).
+- Breakdown (#5): settings `semester_start` (`SEMESTER_START`, ISO date, Europe/Berlin) enables range `semester`
+  (400 when unset). `costs.Pricing(path)`: built-in `PRICES` merged with optional `data/pricing.json`
+  `{"as_of", "source", "models": {"<model>": {"input", "cached_input"?, "output"?}}}` (USD per 1M tokens), read at
+  startup; a broken file keeps the built-in prices and sets `override_error`. Costs are priced when recorded, so an
+  override changes new questions only. `UsageMeter(pricing)`, `CostStore(..., semester_start, pricing)`. Summary
+  adds `by_step` / `by_model` (`calls, input, cached, output, spend_usd`, most expensive first), `daily`
+  (`[{date, planner, embeddings, answer, total}]` per Berlin day in the range, zeros included, oldest first),
+  `cache` (`{input, cached, share}` over planner + answer calls; embeddings can't be cached) and
+  `pricing.override_error`.

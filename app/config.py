@@ -39,6 +39,7 @@ class Settings:
     # The planner only rewrites the question into search queries; a small model is fast enough there.
     kb_plan_model: str = "gpt-4.1-mini"
     kb_threshold: float = 0.2
+    semester_start: str | None = None  # ISO date (Europe/Berlin) for the cost dashboard's "semester" range
 
     @property
     def kb_collection(self) -> str:
@@ -154,4 +155,5 @@ def get_settings() -> Settings:
         kb_chat_model=os.getenv("KB_CHAT_MODEL", "gpt-4.1"),
         kb_plan_model=os.getenv("KB_PLAN_MODEL", "gpt-4.1-mini"),
         kb_threshold=float(os.getenv("KB_THRESHOLD", "0.2")),
+        semester_start=os.getenv("SEMESTER_START") or None,
     )

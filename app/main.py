@@ -113,7 +113,9 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
     settings = settings or get_settings()
     state = AppState(settings, provider)
     kb_mode = settings.app_mode == "kb"
-    cost_store = costs.CostStore(settings.kb_costs_db_path, clock) if kb_mode else None
+    pricing = costs.Pricing(settings.data_dir / "pricing.json")  # optional price override, read at startup
+    cost_store = (costs.CostStore(settings.kb_costs_db_path, clock, semester_start=settings.semester_start,
+                                  pricing=pricing) if kb_mode else None)
     limiter = guardrails.RateLimiter(settings.rate_limit_per_min)
     ip_limiter = guardrails.RateLimiter(settings.rate_limit_ip_per_min)
     app = FastAPI(title="DTM Studienassistent" if kb_mode else "Jan RAG clone")
@@ -349,7 +351,7 @@ def create_app(settings: Settings | None = None, provider: Provider | None = Non
         def mark(key: str) -> None:
             timing[key] = round(time.perf_counter() - t0, 3)
 
-        meter = costs.UsageMeter()  # this question's paid calls; never shared between requests
+        meter = costs.UsageMeter(pricing)  # this question's paid calls; never shared between requests
         plan: dict = {}
         hits: list[dict] = []
         messages: list[dict] = []

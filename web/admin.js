@@ -2,6 +2,7 @@
 // which is asked once and kept in sessionStorage under the same key as the settings dialog in app.js.
 const ADMIN_KEY = "dtm_admin_token";
 const $ = (id) => document.getElementById(id);
+const SVG_NS = "http://www.w3.org/2000/svg";
 
 function getAdminToken(ask) {
   let tok = null;
@@ -38,7 +39,13 @@ async function load(retry = true) {
     if (retry) return load(false);
     showError("Invalid admin token."); return;
   }
-  if (!res.ok) { showError(`Could not load costs (${res.status}).`); return; }
+  if (!res.ok) {
+    // A 400 carries the server's reason (e.g. no semester configured) in a JSON "detail" field.
+    let detail = null;
+    if (res.status === 400) { try { detail = (await res.json()).detail; } catch { /* body is not JSON */ } }
+    showError(typeof detail === "string" && detail ? detail : `Could not load costs (${res.status}).`);
+    return;
+  }
   render(await res.json());
 }
 
@@ -49,7 +56,14 @@ function render(d) {
   $("p95").textContent = usd(pq.p95);
   $("spend").textContent = usd(d.spend_usd);
   $("questions").textContent = String(d.questions ?? "–");
+  const cache = d.cache || null;
+  $("cache").textContent = !cache || cache.share == null ? "–" : `${(cache.share * 100).toFixed(1)}%`;
+  $("cache-sub").textContent = cache
+    ? `${(cache.cached || 0).toLocaleString()} of ${(cache.input || 0).toLocaleString()} tokens` : "";
+  renderDaily(d.daily || []);
   renderReasons(d.by_reason || [], d.spend_usd || 0);
+  renderUsage("steps", d.by_step || [], (r) => STEP_NAMES[r.step] || r.step);
+  renderUsage("models", d.by_model || [], (r) => r.model);
   const est = d.estimated_questions || 0;
   $("estimated").hidden = !est;
   $("estimated").textContent = est
@@ -59,6 +73,9 @@ function render(d) {
   $("unknown").textContent = unknown
     ? `${unknown} question(s) used a model missing from the price table; their cost is incomplete.` : "";
   const p = d.pricing || {};
+  $("pricing-error").hidden = !p.override_error;
+  $("pricing-error").textContent = p.override_error
+    ? `The admin pricing.json file is invalid: ${p.override_error}` : "";
   $("pricing").textContent = `Estimated from token counts, ${p.currency || "USD"}. Prices as of ${p.as_of || "?"} (${p.source || "?"}).`;
 }
 
@@ -70,6 +87,8 @@ const REASONS = {
   aborted: ["Aborted", "the answer stream was cut mid-way"],
   error: ["Failed", "a model call failed"],
 };
+
+const STEP_NAMES = { answer: "Answer", planner: "Planner", embeddings: "Search embeddings" };
 
 function renderReasons(rows, total) {
   const body = $("reasons").tBodies[0];
@@ -89,6 +108,102 @@ function renderReasons(rows, total) {
     td.colSpan = 4; td.className = "hint"; td.textContent = "No questions in this range.";
     tr.append(td); body.append(tr);
   }
+}
+
+// Rows for the "By step" and "By model" tables: one label column, then calls, tokens and spend.
+function renderUsage(id, rows, labelOf) {
+  const body = $(id).tBodies[0];
+  body.replaceChildren(...rows.map((r) => {
+    const tr = document.createElement("tr");
+    const name = document.createElement("td");
+    name.textContent = labelOf(r);
+    const cells = [
+      (r.calls || 0).toLocaleString(),
+      (r.input || 0).toLocaleString(),
+      (r.cached || 0).toLocaleString(),
+      (r.output || 0).toLocaleString(),
+      usd(r.spend_usd),
+    ].map((text) => { const td = document.createElement("td"); td.className = "num"; td.textContent = text; return td; });
+    tr.append(name, ...cells);
+    return tr;
+  }));
+  if (!rows.length) {
+    const tr = document.createElement("tr"), td = document.createElement("td");
+    td.colSpan = 6; td.className = "hint"; td.textContent = "No calls in this range.";
+    tr.append(td); body.append(tr);
+  }
+}
+
+function svgEl(name, attrs = {}, cls = null) {
+  const node = document.createElementNS(SVG_NS, name);
+  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, String(v));
+  if (cls) node.setAttribute("class", cls);
+  return node;
+}
+
+// Stacked daily bars: answer at the bottom, then planner, then embeddings. Drawn in a fixed
+// 480x240 viewBox so the SVG scales to the container width without horizontal scrolling.
+function renderDaily(days) {
+  const box = $("daily");
+  const max = days.reduce((m, day) => Math.max(m, day.total || 0), 0);
+  if (!days.length || max <= 0) {
+    const p = document.createElement("p");
+    p.className = "note";
+    p.textContent = "No spend in this range.";
+    box.replaceChildren(p);
+    return;
+  }
+
+  const W = 480, H = 240, L = 64, R = 8, T = 12, B = 30;
+  const plotW = W - L - R, plotH = H - T - B, base = T + plotH;
+  const slot = plotW / days.length;
+  const barW = Math.max(1, slot * 0.75);
+  const segments = [["answer", "seg-answer"], ["planner", "seg-planner"], ["embeddings", "seg-embeddings"]];
+
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", role: "img", "aria-label": "Daily spend by step" }, "daily-svg");
+  svg.append(svgEl("line", { x1: L, x2: W - R, y1: base, y2: base }, "axis-line"));
+  days.forEach((day, i) => {
+    const g = svgEl("g");
+    const title = svgEl("title");
+    title.textContent = `${day.date}: ${usd(day.total)} (answer ${usd(day.answer)}, planner ${usd(day.planner)}, embeddings ${usd(day.embeddings)})`;
+    g.append(title);
+    // Full-slot transparent target so zero-spend days still show their tooltip.
+    g.append(svgEl("rect", { x: (L + i * slot).toFixed(2), y: T, width: slot.toFixed(2), height: plotH }, "hit"));
+    const x = L + i * slot + (slot - barW) / 2;
+    let stack = 0;
+    for (const [key, cls] of segments) {
+      const v = day[key] || 0;
+      if (v <= 0) continue;
+      const h = (v / max) * plotH;
+      g.append(svgEl("rect", {
+        x: x.toFixed(2), y: (base - stack - h).toFixed(2), width: barW.toFixed(2), height: h.toFixed(2),
+      }, cls));
+      stack += h;
+    }
+    svg.append(g);
+  });
+
+  const yLabel = svgEl("text", { x: L - 6, y: T + 10, "text-anchor": "end" }, "axis");
+  yLabel.textContent = usd(max);
+  svg.append(yLabel);
+  if (days.length > 1) {
+    const first = svgEl("text", { x: L, y: H - 8, "text-anchor": "start" }, "axis");
+    first.textContent = days[0].date;
+    const last = svgEl("text", { x: W - R, y: H - 8, "text-anchor": "end" }, "axis");
+    last.textContent = days[days.length - 1].date;
+    svg.append(first, last);
+  }
+
+  const legend = document.createElement("div");
+  legend.className = "legend";
+  for (const [label, cls] of [["Answer", "sw-answer"], ["Planner", "sw-planner"], ["Search embeddings", "sw-embeddings"]]) {
+    const item = document.createElement("span");
+    const swatch = document.createElement("i");
+    swatch.className = `sw ${cls}`;
+    item.append(swatch, label);
+    legend.append(item);
+  }
+  box.replaceChildren(legend, svg);
 }
 
 function showError(msg) { $("error").textContent = msg; $("error").hidden = false; }

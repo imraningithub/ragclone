@@ -32,6 +32,9 @@ CHAT_STEPS = ("planner", "answer")  # chat-completion calls; only these can be s
 # Question outcomes: ANSWERED (stored as reason NULL), the refusals no_context / no_answer / uncited, and
 # ABORTED (the client went away mid-answer) / ERROR (the model call failed): both still cost money.
 ANSWERED, ABORTED, ERROR = "answered", "aborted", "error"
+TOP_N = 10
+RETENTION_DAYS = 30  # question text is deleted after this; tokens and cost stay
+DAY_SECONDS = 86400
 
 
 class Pricing:
@@ -183,6 +186,35 @@ def _group(calls: list, key: str) -> list[dict]:
     return sorted(groups.values(), key=lambda g: -g["spend_usd"])
 
 
+def _top_questions(rows: list, calls: list, limit: int = TOP_N) -> list[dict]:
+    """The most expensive questions with their per-step cost and tokens; text is None once purged."""
+    top = sorted(rows, key=lambda r: (-r["total_usd"], -r["ts"]))[:limit]
+    out = {r["id"]: {"id": r["id"], "asked_at": datetime.fromtimestamp(r["ts"], TZ).isoformat(timespec="seconds"),
+                     "question": r["question"], "reason": r["reason"] or ANSWERED, "spend_usd": r["total_usd"],
+                     "input": 0, "cached": 0, "output": 0, "steps": {}} for r in top}
+    for c in calls:
+        q = out.get(c["question_id"])
+        if q is None:
+            continue
+        q["input"] += c["input"]
+        q["cached"] += c["cached"]
+        q["output"] += c["output"]
+        q["steps"][c["step"]] = q["steps"].get(c["step"], 0.0) + (c["usd"] or 0.0)
+    return list(out.values())
+
+
+def _top_visitors(rows: list, limit: int = TOP_N) -> list[dict]:
+    """Spend per anonymous visitor: the first 8 characters of the stored cookie hash, never the cookie."""
+    visitors: dict[str, dict] = {}
+    for r in rows:
+        if not r["visitor"]:
+            continue
+        v = visitors.setdefault(r["visitor"][:8], {"visitor": r["visitor"][:8], "questions": 0, "spend_usd": 0.0})
+        v["questions"] += 1
+        v["spend_usd"] += r["total_usd"]
+    return sorted(visitors.values(), key=lambda v: (-v["spend_usd"], -v["questions"]))[:limit]
+
+
 class CostStore:
     def __init__(self, db_path: str, clock: Callable[[], float] = time.time,
                  semester_start: str | None = None, pricing: Pricing | None = None) -> None:
@@ -197,10 +229,25 @@ class CostStore:
             self._conn.execute("PRAGMA foreign_keys = ON")
             self._conn.executescript(_SCHEMA)
             self._conn.commit()
+        self._last_purge: float | None = None
+        self.purge_question_text()  # on app start; afterwards at most once a day, see record_question
+
+    def purge_question_text(self) -> int:
+        """Delete question text older than RETENTION_DAYS; the rows, tokens and cost stay. Returns rows purged."""
+        now = self._clock()
+        with self._lock:
+            cur = self._conn.execute("UPDATE questions SET question = NULL WHERE question IS NOT NULL AND ts < ?",
+                                     (now - RETENTION_DAYS * DAY_SECONDS,))
+            self._conn.commit()
+            self._last_purge = now
+        return cur.rowcount
 
     def record_question(self, meter: UsageMeter, *, visitor: str | None, reason: str | None,
                         question: str, timing: dict | None = None) -> int:
         now = self._clock()
+        # No cron job: an incoming question triggers the purge, at most once a day.
+        if self._last_purge is None or now - self._last_purge >= DAY_SECONDS:
+            self.purge_question_text()
         with self._lock:
             cur = self._conn.execute(
                 "INSERT INTO questions (ts, visitor, reason, question, timing, total_usd, estimated, unknown) "
@@ -223,10 +270,11 @@ class CostStore:
         start = range_start(range_name, now, self._semester_start)
         where, args = ("WHERE ts >= ?", (start,)) if start is not None else ("", ())
         with self._lock:
-            rows = self._conn.execute(f"SELECT ts, total_usd, unknown, estimated, reason FROM questions {where}",
-                                      args).fetchall()
+            rows = self._conn.execute(
+                f"SELECT id, ts, visitor, question, total_usd, unknown, estimated, reason FROM questions {where}",
+                args).fetchall()
             calls = self._conn.execute(
-                "SELECT q.ts, c.step, c.model, c.input, c.cached, c.output, c.usd FROM calls c "
+                "SELECT c.question_id, q.ts, c.step, c.model, c.input, c.cached, c.output, c.usd FROM calls c "
                 f"JOIN questions q ON q.id = c.question_id {where.replace('ts', 'q.ts')}", args).fetchall()
         first_day = _berlin_day(start if start is not None else min((r["ts"] for r in rows), default=now))
         chat = [c for c in calls if c["step"] in CHAT_STEPS]
@@ -251,6 +299,9 @@ class CostStore:
             "by_reason": sorted(by_reason.values(), key=lambda e: (e["reason"] != ANSWERED, -e["questions"])),
             "by_step": _group(calls, "step"),
             "by_model": _group(calls, "model"),
+            "top_questions": _top_questions(rows, calls),
+            "top_visitors": _top_visitors(rows),
+            "retention_days": RETENTION_DAYS,
             "daily": _daily(calls, first_day, _berlin_day(now)),
             "cache": {"input": chat_input, "cached": chat_cached,
                       "share": chat_cached / chat_input if chat_input else None},

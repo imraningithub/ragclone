@@ -291,3 +291,8 @@ settings gear hidden unless URL has `?admin=1`. `done.refused` -> style the mess
   (`[{date, planner, embeddings, answer, total}]` per Berlin day in the range, zeros included, oldest first),
   `cache` (`{input, cached, share}` over planner + answer calls; embeddings can't be cached) and
   `pricing.override_error`.
+- Top lists and retention (#6): summary adds `top_questions` (max 10, most expensive first: `{id, asked_at`
+  (Europe/Berlin ISO), `question` (None once purged), `reason, spend_usd, input, cached, output, steps: {step: usd}}`),
+  `top_visitors` (max 10: `{visitor` = first 8 chars of the stored cookie hash, `questions, spend_usd}`) and
+  `retention_days` (30). `CostStore.purge_question_text()` sets question text older than 30 days to NULL (rows,
+  tokens and cost stay); it runs when the store opens (app start) and from `record_question` at most once a day.

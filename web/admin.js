@@ -19,6 +19,7 @@ function clearAdminToken() { try { sessionStorage.removeItem(ADMIN_KEY); } catch
 function usd(v) {
   if (v == null) return "–";
   if (v === 0) return "$0";
+  if (v > 0 && v < 0.000005) return "<$0.00001";  // e.g. one embeddings call: not free, just tiny
   return v < 0.01 ? `$${v.toFixed(5)}` : v < 100 ? `$${v.toFixed(2)}` : `$${Math.round(v).toLocaleString()}`;
 }
 
@@ -64,6 +65,12 @@ function render(d) {
   renderReasons(d.by_reason || [], d.spend_usd || 0);
   renderUsage("steps", d.by_step || [], (r) => STEP_NAMES[r.step] || r.step);
   renderUsage("models", d.by_model || [], (r) => r.model);
+  renderTopQuestions(d.top_questions || [], d.spend_usd || 0, d.retention_days);
+  renderVisitors(d.top_visitors || [], d.spend_usd || 0);
+  const retention = d.retention_days;
+  $("retention").hidden = retention == null;
+  $("retention").textContent = retention == null
+    ? "" : `Question text is deleted after ${retention} days; tokens and costs are kept.`;
   const est = d.estimated_questions || 0;
   $("estimated").hidden = !est;
   $("estimated").textContent = est
@@ -132,6 +139,70 @@ function renderUsage(id, rows, labelOf) {
     td.colSpan = 6; td.className = "hint"; td.textContent = "No calls in this range.";
     tr.append(td); body.append(tr);
   }
+}
+
+function makeCell(text, cls = "") {
+  const td = document.createElement("td");
+  if (cls) td.className = cls;
+  td.textContent = text;
+  return td;
+}
+
+function emptyRow(body, colSpan) {
+  const tr = document.createElement("tr"), td = document.createElement("td");
+  td.colSpan = colSpan; td.className = "hint"; td.textContent = "No questions in this range.";
+  tr.append(td); body.append(tr);
+}
+
+// Most expensive questions. The question text is deleted after retention_days, but tokens and
+// costs are kept, so a row can outlive its text.
+function renderTopQuestions(rows, total, retentionDays) {
+  const body = $("top-questions").tBodies[0];
+  body.replaceChildren(...rows.map((q) => {
+    const tr = document.createElement("tr");
+    const textTd = document.createElement("td");
+    const text = document.createElement("div");
+    text.className = "q-text";
+    if (q.question) {
+      text.textContent = q.question;
+    } else {
+      const h = document.createElement("div");
+      h.className = "hint";
+      h.textContent = retentionDays != null ? `deleted after ${retentionDays} days` : "deleted";
+      text.append(h);
+    }
+    textTd.append(text);
+    const steps = q.steps || {};
+    const tokens = `${(q.input || 0).toLocaleString()} / ${(q.cached || 0).toLocaleString()} / ${(q.output || 0).toLocaleString()}`;
+    tr.append(
+      textTd,
+      makeCell(q.asked_at ? new Date(q.asked_at).toLocaleString() : "–"),
+      makeCell((REASONS[q.reason] || [q.reason || "–"])[0]),
+      makeCell(tokens, "num"),
+      makeCell(usd(steps.answer), "num"),
+      makeCell(usd(steps.planner), "num"),
+      makeCell(usd(steps.embeddings), "num"),
+      makeCell(usd(q.spend_usd), "num"),
+    );
+    return tr;
+  }));
+  if (!rows.length) emptyRow(body, 8);
+}
+
+// Top visitors by spend. Visitor ids are anonymous browser ids.
+function renderVisitors(rows, total) {
+  const body = $("visitors").tBodies[0];
+  body.replaceChildren(...rows.map((v) => {
+    const tr = document.createElement("tr");
+    tr.append(
+      makeCell(v.visitor || "–", "mono"),
+      makeCell((v.questions || 0).toLocaleString(), "num"),
+      makeCell(usd(v.spend_usd), "num"),
+      makeCell(total ? `${Math.round(((v.spend_usd || 0) / total) * 100)}%` : "–", "num"),
+    );
+    return tr;
+  }));
+  if (!rows.length) emptyRow(body, 4);
 }
 
 function svgEl(name, attrs = {}, cls = null) {

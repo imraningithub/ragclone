@@ -443,3 +443,88 @@ def test_broken_pricing_file_keeps_built_in_prices_and_says_so(tmp_path):
         costs = client.get("/api/admin/costs?range=all", headers=ADMIN).json()
     assert costs["spend_usd"] == pytest.approx(PLAN_AND_EMBED_USD + ANSWER_USD)
     assert costs["pricing"]["as_of"] == "2026-10-20" and "pricing.json" in costs["pricing"]["override_error"]
+
+
+# -- #6: most expensive questions, top visitors, 30-day purge -----------------------------------------------
+
+def test_top_questions_most_expensive_first_with_step_breakdown(tmp_path):
+    provider = UsageProvider()
+    client, _ = _client(tmp_path, provider)
+    with client:
+        for output, question in ((200, "kurz"), (1000, "lang"), (400, "mittel")):
+            provider.answer_usage = (2000, 1024, output)
+            _ask(client, f"Prüfung Anmeldung {question}")
+        top = client.get("/api/admin/costs?range=all", headers=ADMIN).json()["top_questions"]
+    assert [t["question"] for t in top] == ["Prüfung Anmeldung lang", "Prüfung Anmeldung mittel",
+                                            "Prüfung Anmeldung kurz"]
+    first = top[0]
+    assert first["reason"] == "answered" and first["spend_usd"] == pytest.approx(0.01103)
+    assert (first["input"], first["cached"], first["output"]) == (3300, 1024, 1100)
+    assert first["steps"] == {"planner": pytest.approx(0.00056), "embeddings": pytest.approx(0.000006),
+                              "answer": pytest.approx(0.010464)}
+    assert first["asked_at"].endswith(("+02:00", "+01:00"))  # Europe/Berlin
+
+
+def test_top_questions_capped_at_ten(tmp_path):
+    client, _ = _client(tmp_path)
+    with client:
+        for _ in range(11):
+            _ask(client)
+        costs = client.get("/api/admin/costs?range=all", headers=ADMIN).json()
+    assert costs["questions"] == 11 and len(costs["top_questions"]) == 10
+
+
+def test_top_visitors_are_anonymous_and_ranked_by_spend(tmp_path):
+    client, _ = _client(tmp_path)
+    with client:
+        _ask(client)
+        with TestClient(client.app) as other:  # a second browser
+            _ask(other)
+            _ask(other)
+        visitors = client.get("/api/admin/costs?range=all", headers=ADMIN).json()["top_visitors"]
+    assert [v["questions"] for v in visitors] == [2, 1]
+    assert visitors[0]["spend_usd"] == pytest.approx(2 * 0.00463)
+    ids = [v["visitor"] for v in visitors]
+    assert all(len(i) == 8 for i in ids) and ids[0] != ids[1]
+    assert client.cookies.get("dtm_client")[:8] not in ids  # never the cookie itself
+
+
+DAY = 86400.0
+
+
+def _texts(client):
+    top = client.get("/api/admin/costs?range=all", headers=ADMIN).json()["top_questions"]
+    return {t["id"]: t["question"] for t in top}
+
+
+def test_question_text_purged_after_30_days_at_most_once_a_day(tmp_path):
+    client, now = _clocked(tmp_path)
+    with client:
+        now["t"] = 3600.0                      # A at 01:00 on day 0
+        _ask(client, "Frage A Prüfung")
+        now["t"] = 30 * DAY + 1800             # B: purge runs, A is 29 d 23.5 h old -> kept
+        _ask(client, "Frage B Prüfung")
+        assert "Frage A Prüfung" in _texts(client).values()
+        now["t"] = 30 * DAY + 7200             # C: A is now over 30 days old, but the last purge was 1.5 h ago
+        _ask(client, "Frage C Prüfung")
+        assert "Frage A Prüfung" in _texts(client).values()
+        spend_before = client.get("/api/admin/costs?range=all", headers=ADMIN).json()["spend_usd"]
+        now["t"] = 31 * DAY + 3600             # D: a day after the last purge -> A's text goes
+        _ask(client, "Frage D Prüfung")
+        texts = _texts(client)
+        costs = client.get("/api/admin/costs?range=all", headers=ADMIN).json()
+    assert sorted(t for t in texts.values() if t) == ["Frage B Prüfung", "Frage C Prüfung", "Frage D Prüfung"]
+    assert list(texts.values()).count(None) == 1
+    assert costs["questions"] == 4  # the row, tokens and cost stay
+    assert costs["spend_usd"] == pytest.approx(spend_before + 0.00463)
+
+
+def test_question_text_purged_on_app_start(tmp_path):
+    now = {"t": 0.0}
+    settings = _settings(tmp_path)
+    _seed(settings)
+    with TestClient(create_app(settings, UsageProvider(), clock=lambda: now["t"])) as first:
+        _ask(first, "Alte Frage Prüfung")
+    now["t"] = 31 * DAY
+    with TestClient(create_app(settings, UsageProvider(), clock=lambda: now["t"])) as restarted:
+        assert list(_texts(restarted).values()) == [None]  # gone before any new question arrives

@@ -570,3 +570,38 @@ def test_cost_db_from_before_test_traffic_is_migrated(tmp_path):
         _ask_with(client, {"X-Traffic": "test", **ADMIN})
         costs = client.get("/api/admin/costs?range=all", headers=ADMIN).json()
     assert (costs["questions"], costs["test_questions"]) == (1, 1)  # the old row counts as real traffic
+
+
+# -- #8: indexing cost ------------------------------------------------------------------------------------------
+
+def _ingest(settings, provider):
+    import importlib.util
+    from pathlib import Path
+
+    script = Path(__file__).resolve().parent.parent / "scripts" / "ingest_kb.py"
+    spec = importlib.util.spec_from_file_location("ingest_kb_costs", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.run(settings, provider, kb_dir=settings.kb_dir)
+
+
+def test_reindexing_cost_is_recorded_apart_from_questions(tmp_path):
+    settings = _settings(tmp_path)
+    (settings.kb_dir / "regeln.txt").write_text("Die Anmeldung zur Prüfung erfolgt online bis zum 15. Mai.", "utf-8")
+    (settings.kb_dir / "plan.txt").write_text("Im ersten Semester gibt es sechs Module mit je fünf ECTS.", "utf-8")
+    (settings.kb_dir / "pruefungsordnung.pdf").unlink()  # placeholder PDF from the test settings, not readable
+    provider = UsageProvider()
+    provider.embed_tokens = 1000  # per embeddings call; one call per small file
+    rows = _ingest(settings, provider)
+    assert sorted(r["status"] for r in rows) == ["new", "new"]
+    assert {r["status"] for r in _ingest(settings, provider)} == {"unchanged"}  # no embedding calls, no cost
+
+    with TestClient(create_app(settings, UsageProvider())) as client:
+        before = client.get("/api/admin/costs?range=all", headers=ADMIN).json()
+        _ask(client, "Wann ist die Anmeldung zur Prüfung?")
+        after = client.get("/api/admin/costs?range=all", headers=ADMIN).json()
+    assert before["indexing"] == {"calls": 2, "input": 2000, "spend_usd": pytest.approx(2 * 1000 * 0.02e-6)}
+    assert before["questions"] == 0 and before["spend_usd"] == 0
+    assert after["spend_usd"] == pytest.approx(0.00463)              # the question alone
+    assert after["per_question"]["mean"] == pytest.approx(0.00463)
+    assert "indexing" not in {r["step"] for r in after["by_step"]}

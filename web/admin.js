@@ -79,6 +79,7 @@ function render(d) {
   renderReasons(d.by_reason || [], d.spend_usd || 0);
   renderUsage("steps", d.by_step || [], (r) => STEP_NAMES[r.step] || r.step);
   renderUsage("models", d.by_model || [], (r) => r.model);
+  renderIndexing(d.indexing || {});
   renderTopQuestions(d.top_questions || [], d.spend_usd || 0, d.retention_days);
   renderVisitors(d.top_visitors || [], d.spend_usd || 0);
   const retention = d.retention_days;
@@ -135,6 +136,14 @@ function renderReasons(rows, total) {
     td.colSpan = 4; td.className = "hint"; td.textContent = "No questions in this range.";
     tr.append(td); body.append(tr);
   }
+}
+
+// One-time cost of re-indexing the official documents in the range. Kept apart from the per-question figures.
+function renderIndexing(ix) {
+  const calls = ix.calls || 0;
+  $("indexing").textContent = calls > 0
+    ? `Re-indexing the documents cost ${usd(ix.spend_usd)} in this range (${calls} embedding call(s), ${(ix.input || 0).toLocaleString()} tokens). Not included in the per-question figures above.`
+    : "No re-indexing in this range.";
 }
 
 // Rows for the "By step" and "By model" tables: one label column, then calls, tokens and spend.

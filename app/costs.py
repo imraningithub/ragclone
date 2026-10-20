@@ -267,6 +267,17 @@ class CostStore:
             self._conn.commit()
         return qid
 
+    def record_indexing(self, meter: UsageMeter) -> None:
+        """Store the embedding calls of a (re-)index run: calls without a question, step "indexing"."""
+        now = self._clock()
+        with self._lock:
+            self._conn.executemany(
+                "INSERT INTO calls (question_id, ts, step, model, input, cached, output, usd, estimated) "
+                "VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [(now, c["step"], c["model"], c["input"], c["cached"], c["output"], c["usd"], int(c["estimated"]))
+                 for c in meter.calls])
+            self._conn.commit()
+
     def summary(self, range_name: str, include_test: bool = False) -> dict:
         if range_name not in RANGES:
             raise ValueError(f"range must be one of {', '.join(RANGES)}")
@@ -275,6 +286,9 @@ class CostStore:
         in_range, args = ("ts >= ?", (start,)) if start is not None else ("1 = 1", ())
         where = f"WHERE {in_range}" + ("" if include_test else " AND test = 0")
         with self._lock:
+            indexing = self._conn.execute(
+                "SELECT COUNT(*) AS calls, COALESCE(SUM(input), 0) AS input, COALESCE(SUM(usd), 0) AS usd "
+                f"FROM calls WHERE question_id IS NULL AND {in_range}", args).fetchone()
             test_questions = self._conn.execute(
                 f"SELECT COUNT(*) FROM questions WHERE {in_range} AND test = 1", args).fetchone()[0]
             rows = self._conn.execute(
@@ -312,6 +326,8 @@ class CostStore:
             "top_questions": _top_questions(rows, calls),
             "top_visitors": _top_visitors(rows),
             "retention_days": RETENTION_DAYS,
+            # one-time document embedding; not part of spend_usd or the per-question figures
+            "indexing": {"calls": indexing["calls"], "input": indexing["input"], "spend_usd": indexing["usd"]},
             "daily": _daily(calls, first_day, _berlin_day(now)),
             "cache": {"input": chat_input, "cached": chat_cached,
                       "share": chat_cached / chat_input if chat_input else None},

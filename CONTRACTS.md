@@ -302,3 +302,8 @@ settings gear hidden unless URL has `?admin=1`. `done.refused` -> style the mess
   (default) excludes test questions from every figure; the response adds `include_test` and `test_questions`
   (test questions in the range, counted either way). The dashboard has an "Include test traffic" toggle
   (`?include_test=1` in the URL).
+- Indexing cost (#8): `rag.ingest_kb_file(..., usage=None)` passes the recorder to every embedding batch;
+  `scripts/ingest_kb.py` collects them as step `indexing` and stores them with `CostStore.record_indexing(meter)`
+  (calls with `question_id` NULL), printing the run's cost. Unchanged files make no calls and record nothing.
+  Summary adds `indexing: {calls, input, spend_usd}` for runs in the range; it is not part of `spend_usd`,
+  `by_step`, `by_model` or the per-question figures.

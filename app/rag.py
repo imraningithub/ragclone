@@ -98,16 +98,18 @@ def ingest_file(store, provider, settings: Settings, rag: RagSettings, *, collec
     return _file_info(store, collection, fid)
 
 
-def _embed_all(provider, texts: list[str]) -> list[list[float]]:
+def _embed_all(provider, texts: list[str], usage=None) -> list[list[float]]:
     embeddings: list[list[float]] = []
+    extra = {"usage": usage} if usage is not None else {}  # only providers that support it get it
     for i in range(0, len(texts), EMBED_BATCH):
-        embeddings.extend(provider.embed(texts[i:i + EMBED_BATCH]))
+        embeddings.extend(provider.embed(texts[i:i + EMBED_BATCH], **extra))
     if len(embeddings) != len(texts) or not embeddings or not embeddings[0]:
         raise ValueError("embedding is empty")
     return embeddings
 
 
-def ingest_kb_file(store, provider, settings: Settings, *, collection: str, path: str, name: str) -> dict:
+def ingest_kb_file(store, provider, settings: Settings, *, collection: str, path: str, name: str,
+                   usage=None) -> dict:
     """Ingest one knowledge-base file, always in embeddings mode.
 
     PDFs are chunked page by page so every chunk knows its page ({"page": n} in its meta) and
@@ -129,7 +131,7 @@ def ingest_kb_file(store, provider, settings: Settings, *, collection: str, path
     if not chunks:
         raise ValueError("no extractable text")  # e.g. a scanned PDF without OCR
 
-    embeddings = _embed_all(provider, chunks)
+    embeddings = _embed_all(provider, chunks, usage)  # `usage` records each batch (indexing cost)
     store.create_collection(collection, len(embeddings[0]), provider.embed_model)
     fid = store.add_file(collection, name=name, path=path, type=file_type, size=size, mode="embeddings")
     try:
